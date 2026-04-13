@@ -154,6 +154,7 @@ export interface TelegramOrderContext {
   created_at: string;
   utm_source: string | null;
   retailcrm_base_url?: string | null;
+  alert_types: NotificationAlertType[];
   raw_payload: RetailCrmOrderResponse;
 }
 
@@ -184,6 +185,44 @@ export interface DashboardSummary {
   ordersWithoutContact: number;
 }
 
+export type NotificationAlertType =
+  | "high-value"
+  | "missing-contact"
+  | "unknown-source"
+  | "cancelled";
+
+export interface AdminSettings {
+  singleton_key: string;
+  notifications_enabled: boolean;
+  high_value_enabled: boolean;
+  high_value_threshold: number;
+  missing_contact_enabled: boolean;
+  unknown_source_enabled: boolean;
+  cancelled_enabled: boolean;
+  working_hours_enabled: boolean;
+  workday_start_hour: number;
+  workday_end_hour: number;
+  timezone: string;
+}
+
+export interface OwnerMetrics {
+  averageOrderValue: number;
+  ordersLast24Hours: number;
+  cancelRate: number;
+  approvalBacklog: number;
+  deliveryInFlight: number;
+  pendingAlerts: number;
+  pendingOrders: number;
+}
+
+export interface NotificationOverview {
+  windowOpen: boolean;
+  activeAlerts: NotificationAlertType[];
+  pendingEvents: number;
+  pendingOrders: number;
+  scheduleLabel: string;
+}
+
 export interface SourceMetric {
   source: string;
   orders: number;
@@ -204,6 +243,7 @@ export interface StatusSummaryItem {
 export interface NotificationLogItem {
   order_retailcrm_id: number;
   order_number: string | null;
+  event_type: NotificationAlertType;
   channel: string;
   recipient: string | null;
   status: string;
@@ -239,4 +279,6 @@ export interface OperationalOrderRow {
   items: OrderLineItem[];
   missing_contact: boolean;
   unknown_source: boolean;
+  telegram_notified_at: string | null;
+  alert_reasons: string[];
 }

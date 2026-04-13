@@ -30,6 +30,11 @@ export function OpsOrderCard({ order }: OpsOrderCardProps) {
         <span className="badge">{order.status_label}</span>
         <span className="badge badge-accent">{order.sla_label}</span>
         <span className="badge">{order.source_label}</span>
+        {order.alert_reasons.map((reason) => (
+          <span className="badge badge-warning" key={`${order.crm_number}-${reason}`}>
+            {reason}
+          </span>
+        ))}
       </div>
 
       <div className="ops-meta">
@@ -75,4 +80,3 @@ export function OpsOrderCard({ order }: OpsOrderCardProps) {
     </article>
   );
 }
-

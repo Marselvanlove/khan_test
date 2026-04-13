@@ -1,3 +1,4 @@
+import { AdminSettingsPanel } from "@/components/admin-settings-panel";
 import { OrderChart } from "@/components/order-chart";
 import { NotificationLogList } from "@/components/notification-log-list";
 import { OrderQueue } from "@/components/order-queue";
@@ -20,8 +21,8 @@ export default async function HomePage() {
           <h1>Операционный дашборд заказов для Tomyris</h1>
           <p className="hero-text">
             Серверная витрина по заказам fashion e-commerce бренда из Казахстана: social-channel
-            acquisition, пороги доставки `35 000 ₸` и `60 000 ₸`, плюс Telegram-алерты для заказов
-            дороже 50&nbsp;000 ₸.
+            acquisition, пороги доставки `35 000 ₸` и `60 000 ₸`, плюс управляемые
+            Telegram-уведомления по сумме, рабочему окну, часовому поясу и операционным рискам.
           </p>
         </div>
       </section>
@@ -37,6 +38,8 @@ export default async function HomePage() {
         </section>
       ) : (
         <>
+          <AdminSettingsPanel settings={data.adminSettings} overview={data.notificationOverview} />
+
           <section className="stats-grid">
             <StatCard
               eyebrow="Всего заказов"
@@ -49,9 +52,9 @@ export default async function HomePage() {
               hint="Суммарная выручка по всем заказам."
             />
             <StatCard
-              eyebrow="Крупные 50k+"
+              eyebrow={`Крупные ${Math.round(data.adminSettings.high_value_threshold / 1000)}k+`}
               value={String(data.summary.highValueOrders)}
-              hint="Заказы с суммой выше 50 000 ₸."
+              hint="Заказы, которые сейчас попадают под порог уведомления."
               tone="accent"
             />
             <StatCard
@@ -74,6 +77,37 @@ export default async function HomePage() {
               value={String(data.summary.ordersWithoutContact)}
               hint="Заказы без телефона и email. Это оперативный риск."
             />
+            <StatCard
+              eyebrow="Средний чек"
+              value={formatCurrencyKzt(data.ownerMetrics.averageOrderValue)}
+              hint="Качество потока, а не только его объём."
+            />
+            <StatCard
+              eyebrow="Заказы за 24 часа"
+              value={String(data.ownerMetrics.ordersLast24Hours)}
+              hint="Текущий темп входящего потока."
+            />
+            <StatCard
+              eyebrow="Отмена, %"
+              value={`${data.ownerMetrics.cancelRate.toFixed(1)}%`}
+              hint="Прямой индикатор потерь на процессе."
+            />
+            <StatCard
+              eyebrow="Согласование"
+              value={String(data.ownerMetrics.approvalBacklog)}
+              hint="Новые и ожидающие ответа заказы."
+            />
+            <StatCard
+              eyebrow="Доставка в работе"
+              value={String(data.ownerMetrics.deliveryInFlight)}
+              hint="Заказы, которые уже ушли в логистику."
+            />
+            <StatCard
+              eyebrow="Очередь алертов"
+              value={`${data.ownerMetrics.pendingOrders}/${data.ownerMetrics.pendingAlerts}`}
+              hint="Сначала число заказов, потом число событий к отправке."
+              tone="accent"
+            />
           </section>
 
           <OrderChart metrics={data.metrics} />
@@ -89,6 +123,14 @@ export default async function HomePage() {
           </section>
 
           <NotificationLogList rows={data.notificationLogs} />
+
+          <OrderQueue
+            title="Очередь уведомлений"
+            caption="Bot Queue"
+            description="Заказы, по которым бот ещё должен отправить хотя бы одно уведомление по текущим правилам."
+            rows={data.pendingNotificationOrders.slice(0, 8)}
+            emptyText="Очередь уведомлений пуста: активные сигналы уже обработаны."
+          />
 
           <section className="grid-2">
             <SourceBreakdown
@@ -111,7 +153,7 @@ export default async function HomePage() {
             caption="Приоритет"
             description="Главная очередь для менеджера: клиент, товары, адрес, канал и быстрые действия."
             rows={data.highValueOrders.slice(0, 8)}
-            emptyText="Крупных заказов выше 50 000 ₸ сейчас нет."
+            emptyText="Крупных заказов выше текущего порога сейчас нет."
           />
 
           <section className="grid-2">

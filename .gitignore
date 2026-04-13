@@ -7,3 +7,5 @@ coverage
 dist
 source-task
 *.tsbuildinfo
+playwright-report
+test-results

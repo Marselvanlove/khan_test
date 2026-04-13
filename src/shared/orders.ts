@@ -1,7 +1,6 @@
 import type {
-  DailyMetric,
-  DashboardOrderRow,
   MockOrder,
+  NotificationAlertType,
   OperationalOrderRow,
   OrderRecordInput,
   RetailCrmCreateOrderPayload,
@@ -12,6 +11,7 @@ import type {
   StatusSummaryItem,
   TelegramOrderContext,
 } from "./types";
+import { formatAlertTypeList, getAlertTypeLabel } from "./admin-settings";
 
 export const HIGH_VALUE_THRESHOLD = 50_000;
 export const FREE_SHIPPING_THRESHOLD = 35_000;
@@ -538,6 +538,8 @@ function formatWhatsappLink(phone: string | null): string | null {
 export function formatTelegramMessage(order: TelegramOrderContext): string {
   const rawOrder = order.raw_payload;
   const orderNumber = extractOrderNumber(rawOrder, order.external_id);
+  const alertTypes = order.alert_types.length ? order.alert_types : (["high-value"] as NotificationAlertType[]);
+  const alertSummary = formatAlertTypeList(alertTypes);
   const phone = extractOrderPhone(rawOrder, order.phone);
   const email = extractOrderEmail(rawOrder, order.email);
   const address = extractOrderAddress(rawOrder);
@@ -552,10 +554,14 @@ export function formatTelegramMessage(order: TelegramOrderContext): string {
   });
   const crmLink = buildRetailCrmOrderUrl(order.retailcrm_base_url, order.retailcrm_id);
   const lines = [
-    "<b>Крупный заказ</b>",
+    `<b>${escapeHtml(getAlertTypeLabel(alertTypes[0]))}</b>`,
     `Заказ <code>${escapeHtml(orderNumber)}</code>`,
     `<b>${escapeHtml(order.customer_name)}</b>`,
   ];
+
+  if (alertTypes.length > 1) {
+    lines.splice(1, 0, `Причины: ${escapeHtml(alertSummary)}`);
+  }
 
   if (waLink) {
     lines.push(`Телефон: ${waLink}`);
@@ -597,27 +603,28 @@ export function formatTelegramMessage(order: TelegramOrderContext): string {
   return lines.join("\n");
 }
 
-export function summarizeMetrics(metrics: DailyMetric[], orders: Array<Pick<OperationalOrderRow, "total_amount" | "unknown_source" | "missing_contact">>) {
-  const summary = metrics.reduce(
-    (draft, metric) => {
-      draft.totalOrders += metric.orders_count;
-      draft.totalRevenue += metric.revenue;
-      draft.highValueOrders += metric.high_value_orders;
-
-      return draft;
-    },
-    {
-      totalOrders: 0,
-      totalRevenue: 0,
-      highValueOrders: 0,
-      freeShippingOrders: 0,
-      premiumExpressOrders: 0,
-      unknownSourceOrders: 0,
-      ordersWithoutContact: 0,
-    },
-  );
+export function summarizeMetrics(
+  orders: Array<Pick<OperationalOrderRow, "total_amount" | "unknown_source" | "missing_contact">>,
+  highValueThreshold: number,
+) {
+  const summary = {
+    totalOrders: 0,
+    totalRevenue: 0,
+    highValueOrders: 0,
+    freeShippingOrders: 0,
+    premiumExpressOrders: 0,
+    unknownSourceOrders: 0,
+    ordersWithoutContact: 0,
+  };
 
   for (const order of orders) {
+    summary.totalOrders += 1;
+    summary.totalRevenue += order.total_amount;
+
+    if (order.total_amount > highValueThreshold) {
+      summary.highValueOrders += 1;
+    }
+
     if (order.total_amount >= FREE_SHIPPING_THRESHOLD) {
       summary.freeShippingOrders += 1;
     }

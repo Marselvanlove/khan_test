@@ -1,3 +1,4 @@
+import { getAlertTypeLabel } from "@/shared/admin-settings";
 import { formatOrderDate } from "@/shared/orders";
 import type { NotificationLogItem } from "@/shared/types";
 
@@ -23,7 +24,8 @@ export function NotificationLogList({ rows }: NotificationLogListProps) {
           {rows.map((row) => (
             <article className="log-item" key={`${row.order_retailcrm_id}-${row.created_at}-${row.attempt}`}>
               <p>
-                <code>{row.order_number ?? row.order_retailcrm_id}</code> · {row.status}
+                <code>{row.order_number ?? row.order_retailcrm_id}</code> · {getAlertTypeLabel(row.event_type)} ·{" "}
+                {row.status}
               </p>
               <p>
                 Попытка {row.attempt} · {row.rate_limited ? "rate limit" : "без rate limit"}

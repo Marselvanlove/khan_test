@@ -2,6 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
+  formatWorkingWindow,
+  getAlertTypesForOrder,
+  isNotificationWindowOpen,
+  normalizeAdminSettings,
+} from "../src/shared/admin-settings";
+import {
   buildMockExternalId,
   extractOrderAddress,
   formatTelegramMessage,
@@ -99,6 +105,7 @@ test("formatTelegramMessage includes contact, address and items", () => {
     ],
   };
   const text = formatTelegramMessage({
+    alert_types: ["high-value", "missing-contact"],
     retailcrm_id: 1,
     external_id: "mock-050",
     customer_name: "Толкын Жумагулова",
@@ -112,8 +119,57 @@ test("formatTelegramMessage includes contact, address and items", () => {
   });
 
   assert.match(text, /<b>Толкын Жумагулова<\/b>/);
+  assert.match(text, /Причины: Крупный заказ, Нет контакта у клиента/);
   assert.match(text, /wa\.me\/77001234567/);
   assert.match(text, /«Утягивающий комбидресс Nova Slim» ×2/);
   assert.match(text, /<i>/);
   assert.equal(extractOrderAddress(rawOrder), "пр. Абая 10, кв 5");
+});
+
+test("notification settings normalize schedule and timezone defaults", () => {
+  const settings = normalizeAdminSettings({
+    workday_start_hour: 20,
+    workday_end_hour: 18,
+    timezone: "Invalid/Zone",
+  });
+
+  assert.equal(settings.workday_start_hour, 20);
+  assert.equal(settings.workday_end_hour, 21);
+  assert.equal(settings.timezone, "Asia/Almaty");
+  assert.equal(formatWorkingWindow(settings), "20:00-21:00 (Asia/Almaty)");
+});
+
+test("getAlertTypesForOrder respects enabled rules", () => {
+  const settings = normalizeAdminSettings({
+    high_value_enabled: true,
+    high_value_threshold: 45000,
+    missing_contact_enabled: true,
+    unknown_source_enabled: true,
+    cancelled_enabled: true,
+  });
+
+  assert.deepEqual(
+    getAlertTypesForOrder(
+      {
+        total_amount: 51000,
+        missing_contact: true,
+        unknown_source: true,
+        status_group: "cancel",
+      },
+      settings,
+    ),
+    ["high-value", "missing-contact", "unknown-source", "cancelled"],
+  );
+});
+
+test("isNotificationWindowOpen checks timezone hour window", () => {
+  const settings = normalizeAdminSettings({
+    working_hours_enabled: true,
+    workday_start_hour: 10,
+    workday_end_hour: 19,
+    timezone: "Asia/Almaty",
+  });
+
+  assert.equal(isNotificationWindowOpen(settings, new Date("2026-04-13T06:30:00.000Z")), true);
+  assert.equal(isNotificationWindowOpen(settings, new Date("2026-04-13T15:30:00.000Z")), false);
 });
