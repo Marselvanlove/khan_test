@@ -223,9 +223,15 @@ a {
 }
 
 .source-list,
-.insight-list {
+.insight-list,
+.ops-grid,
+.log-list {
   display: grid;
   gap: 12px;
+}
+
+.ops-grid {
+  grid-template-columns: 1fr;
 }
 
 .source-item {
@@ -257,6 +263,132 @@ a {
 
 .source-revenue {
   font-family: var(--font-mono), monospace;
+}
+
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.status-card,
+.ops-card {
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.66);
+}
+
+.status-card {
+  padding: 16px;
+}
+
+.status-count,
+.status-label,
+.ops-order-number,
+.ops-customer-name,
+.ops-amount {
+  margin: 0;
+}
+
+.status-count {
+  font-size: 1.8rem;
+  font-weight: 700;
+}
+
+.status-label {
+  margin-top: 8px;
+  color: var(--muted);
+}
+
+.ops-card {
+  padding: 18px;
+}
+
+.ops-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: start;
+}
+
+.ops-order-number code {
+  font-family: var(--font-mono), monospace;
+  font-size: 0.95rem;
+}
+
+.ops-customer-name {
+  margin-top: 6px;
+}
+
+.ops-amount {
+  font-size: 1.1rem;
+}
+
+.ops-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(31, 41, 51, 0.06);
+  font-size: 0.84rem;
+  color: var(--ink);
+}
+
+.badge-accent {
+  background: rgba(210, 106, 56, 0.12);
+}
+
+.ops-meta,
+.ops-items,
+.ops-actions {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.ops-meta p,
+.ops-items p,
+.ops-actions a {
+  margin: 0;
+}
+
+.ops-meta p,
+.ops-items p {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.ops-actions {
+  grid-template-columns: repeat(auto-fit, minmax(180px, max-content));
+}
+
+.ops-actions a {
+  text-decoration: none;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: rgba(15, 118, 110, 0.08);
+  color: var(--teal);
+  font-weight: 600;
+}
+
+.log-item {
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.log-item p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
 }
 
 .insight-panel p {

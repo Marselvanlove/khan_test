@@ -2,12 +2,14 @@ import type {
   DailyMetric,
   DashboardOrderRow,
   MockOrder,
+  OperationalOrderRow,
   OrderRecordInput,
   RetailCrmCreateOrderPayload,
   RetailCrmParty,
   RetailCrmOrderItem,
   RetailCrmOrderResponse,
   SourceMetric,
+  StatusSummaryItem,
   TelegramOrderContext,
 } from "./types";
 
@@ -66,6 +68,81 @@ const MOCK_ORDER_SOURCES: Record<string, string> = {
   "mock-048": "instagram",
   "mock-049": "direct",
   "mock-050": "referral",
+};
+
+const STATUS_META: Record<string, { label: string; group: string; groupLabel: string }> = {
+  new: { label: "Новый", group: "new", groupLabel: "Новые" },
+  complete: { label: "Выполнен", group: "complete", groupLabel: "Завершены" },
+  "partially-completed": {
+    label: "Выполнен частично",
+    group: "complete",
+    groupLabel: "Завершены",
+  },
+  "availability-confirmed": {
+    label: "Наличие подтверждено",
+    group: "approval",
+    groupLabel: "Согласование",
+  },
+  "offer-analog": {
+    label: "Предложить замену",
+    group: "approval",
+    groupLabel: "Согласование",
+  },
+  "ready-to-wait": { label: "Готов ждать", group: "approval", groupLabel: "Согласование" },
+  "waiting-for-arrival": {
+    label: "Ожидается поступление",
+    group: "approval",
+    groupLabel: "Согласование",
+  },
+  "client-confirmed": {
+    label: "Согласовано с клиентом",
+    group: "approval",
+    groupLabel: "Согласование",
+  },
+  prepayed: { label: "Предоплата поступила", group: "approval", groupLabel: "Согласование" },
+  "send-to-assembling": {
+    label: "Передано в комплектацию",
+    group: "assembling",
+    groupLabel: "Комплектация",
+  },
+  assembling: { label: "Комплектуется", group: "assembling", groupLabel: "Комплектация" },
+  "assembling-complete": {
+    label: "Укомплектован",
+    group: "assembling",
+    groupLabel: "Комплектация",
+  },
+  "send-to-delivery": {
+    label: "Передан в доставку",
+    group: "delivery",
+    groupLabel: "Доставка",
+  },
+  delivering: { label: "Доставляется", group: "delivery", groupLabel: "Доставка" },
+  redirect: { label: "Доставка перенесена", group: "delivery", groupLabel: "Доставка" },
+  "ready-for-self-pickup": {
+    label: "Готов к самовывозу",
+    group: "delivery",
+    groupLabel: "Доставка",
+  },
+  "arrived-in-pickup-point": {
+    label: "Прибыл в ПВЗ",
+    group: "delivery",
+    groupLabel: "Доставка",
+  },
+  "no-call": { label: "Недозвон", group: "cancel", groupLabel: "Отмены" },
+  "no-product": { label: "Нет в наличии", group: "cancel", groupLabel: "Отмены" },
+  "already-buyed": { label: "Купил в другом месте", group: "cancel", groupLabel: "Отмены" },
+  "delyvery-did-not-suit": {
+    label: "Не устроила доставка",
+    group: "cancel",
+    groupLabel: "Отмены",
+  },
+  "prices-did-not-suit": {
+    label: "Не устроила цена",
+    group: "cancel",
+    groupLabel: "Отмены",
+  },
+  "cancel-other": { label: "Отменен", group: "cancel", groupLabel: "Отмены" },
+  return: { label: "Возврат", group: "cancel", groupLabel: "Отмены" },
 };
 
 export interface MockOrderMappingOptions {
@@ -285,6 +362,101 @@ export function formatOrderDate(value: string): string {
   }).format(new Date(value));
 }
 
+export function formatSourceLabel(source: string | null | undefined): string {
+  if (!source?.trim()) {
+    return "unknown source";
+  }
+
+  const normalized = source.trim().toLowerCase();
+  const labels: Record<string, string> = {
+    instagram: "Instagram",
+    google: "Google",
+    tiktok: "TikTok",
+    referral: "Referral",
+    direct: "Direct",
+  };
+
+  return labels[normalized] ?? normalized;
+}
+
+export function getStatusMeta(statusCode: string | null | undefined) {
+  if (statusCode && STATUS_META[statusCode]) {
+    return STATUS_META[statusCode];
+  }
+
+  if (!statusCode) {
+    return {
+      label: "Статус не задан",
+      group: "unknown",
+      groupLabel: "Неизвестно",
+    };
+  }
+
+  return {
+    label: statusCode.replaceAll("-", " "),
+    group: "unknown",
+    groupLabel: "Неизвестно",
+  };
+}
+
+export function getSegmentMeta(totalAmount: number) {
+  if (totalAmount >= PREMIUM_EXPRESS_THRESHOLD) {
+    return { code: "premium-express" as const, label: "60k+ premium / express" };
+  }
+
+  if (totalAmount > HIGH_VALUE_THRESHOLD) {
+    return { code: "high-value" as const, label: "50k+ крупный заказ" };
+  }
+
+  if (totalAmount >= FREE_SHIPPING_THRESHOLD) {
+    return { code: "free-shipping" as const, label: "35k+ апселл до high-value" };
+  }
+
+  return { code: "under-35" as const, label: "до 35k" };
+}
+
+export function getSlaLabel(params: {
+  totalAmount: number;
+  statusCode: string | null | undefined;
+  missingContact: boolean;
+}) {
+  const statusMeta = getStatusMeta(params.statusCode);
+
+  if (params.missingContact) {
+    return "Нужен контакт вручную";
+  }
+
+  if (statusMeta.group === "delivery") {
+    return "Проверить отгрузку сегодня";
+  }
+
+  if (statusMeta.group === "cancel") {
+    return "Проверить причину отмены";
+  }
+
+  if (params.totalAmount >= PREMIUM_EXPRESS_THRESHOLD) {
+    return "Связаться за 5 минут";
+  }
+
+  if (params.totalAmount > HIGH_VALUE_THRESHOLD) {
+    return "Связаться за 10 минут";
+  }
+
+  if (params.totalAmount >= FREE_SHIPPING_THRESHOLD) {
+    return "Предложить апселл сегодня";
+  }
+
+  return "В обработку сегодня";
+}
+
+export function buildRetailCrmOrderUrl(baseUrl: string | null | undefined, retailcrmId: number): string | null {
+  if (!baseUrl?.trim()) {
+    return null;
+  }
+
+  return `${baseUrl.replace(/\/+$/, "")}/admin/orders/${retailcrmId}/edit`;
+}
+
 function escapeHtml(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -371,6 +543,14 @@ export function formatTelegramMessage(order: TelegramOrderContext): string {
   const address = extractOrderAddress(rawOrder);
   const waLink = formatWhatsappLink(phone);
   const items = extractOrderItems(rawOrder);
+  const statusMeta = getStatusMeta(rawOrder.status ?? null);
+  const segment = getSegmentMeta(order.total_amount);
+  const slaLabel = getSlaLabel({
+    totalAmount: order.total_amount,
+    statusCode: rawOrder.status ?? null,
+    missingContact: !phone && !email,
+  });
+  const crmLink = buildRetailCrmOrderUrl(order.retailcrm_base_url, order.retailcrm_id);
   const lines = [
     "<b>Крупный заказ</b>",
     `Заказ <code>${escapeHtml(orderNumber)}</code>`,
@@ -398,17 +578,26 @@ export function formatTelegramMessage(order: TelegramOrderContext): string {
   }
 
   lines.push(`Сумма: <i>${escapeHtml(formatCurrencyKzt(order.total_amount))}</i>`);
+  lines.push(`Сегмент: ${escapeHtml(segment.label)}`);
+  lines.push(`Статус: ${escapeHtml(statusMeta.label)}`);
+  lines.push(`SLA: ${escapeHtml(slaLabel)}`);
 
   if (order.utm_source) {
-    lines.push(`Источник: ${escapeHtml(order.utm_source)}`);
+    lines.push(`Источник: ${escapeHtml(formatSourceLabel(order.utm_source))}`);
+  } else {
+    lines.push("Источник: unknown source");
   }
 
   lines.push(`Дата: ${escapeHtml(formatOrderDate(order.created_at))}`);
 
+  if (crmLink) {
+    lines.push(`<a href="${escapeHtml(crmLink)}">Открыть заказ в RetailCRM</a>`);
+  }
+
   return lines.join("\n");
 }
 
-export function summarizeMetrics(metrics: DailyMetric[], orders: DashboardOrderRow[]) {
+export function summarizeMetrics(metrics: DailyMetric[], orders: Array<Pick<OperationalOrderRow, "total_amount" | "unknown_source" | "missing_contact">>) {
   const summary = metrics.reduce(
     (draft, metric) => {
       draft.totalOrders += metric.orders_count;
@@ -423,6 +612,8 @@ export function summarizeMetrics(metrics: DailyMetric[], orders: DashboardOrderR
       highValueOrders: 0,
       freeShippingOrders: 0,
       premiumExpressOrders: 0,
+      unknownSourceOrders: 0,
+      ordersWithoutContact: 0,
     },
   );
 
@@ -433,6 +624,14 @@ export function summarizeMetrics(metrics: DailyMetric[], orders: DashboardOrderR
 
     if (order.total_amount >= PREMIUM_EXPRESS_THRESHOLD) {
       summary.premiumExpressOrders += 1;
+    }
+
+    if (order.unknown_source) {
+      summary.unknownSourceOrders += 1;
+    }
+
+    if (order.missing_contact) {
+      summary.ordersWithoutContact += 1;
     }
   }
 
@@ -445,7 +644,7 @@ export function buildSourceMetrics(
   const summary = new Map<string, SourceMetric>();
 
   for (const order of orders) {
-    const source = order.utm_source?.trim() || "unknown";
+    const source = formatSourceLabel(order.utm_source);
     const current = summary.get(source) ?? { source, orders: 0, revenue: 0 };
 
     current.orders += 1;
@@ -460,4 +659,22 @@ export function buildSourceMetrics(
 
     return right.revenue - left.revenue;
   });
+}
+
+export function buildStatusSummary(orders: Array<Pick<OperationalOrderRow, "status_group" | "status_group_label">>): StatusSummaryItem[] {
+  const summary = new Map<string, StatusSummaryItem>();
+
+  for (const order of orders) {
+    const key = order.status_group;
+    const current = summary.get(key) ?? {
+      group: order.status_group,
+      label: order.status_group_label,
+      count: 0,
+    };
+
+    current.count += 1;
+    summary.set(key, current);
+  }
+
+  return Array.from(summary.values()).sort((left, right) => right.count - left.count);
 }

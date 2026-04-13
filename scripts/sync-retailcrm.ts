@@ -1,6 +1,7 @@
 import process from "node:process";
 import { createClient } from "@supabase/supabase-js";
 import {
+  extractOrderNumber,
   formatTelegramMessage,
   HIGH_VALUE_THRESHOLD,
   normalizeRetailCrmOrder,
@@ -10,6 +11,7 @@ import type { OrderRecordInput } from "../src/shared/types";
 
 const TELEGRAM_DELAY_MS = 450;
 const TELEGRAM_MAX_ATTEMPTS = 5;
+let notificationLogAvailable = true;
 
 function readRequiredEnv(name: string): string {
   const value = process.env[name];
@@ -48,7 +50,39 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function recordNotificationLog(
+  supabase: ReturnType<typeof createSupabaseAdmin>,
+  entry: {
+    order_retailcrm_id: number;
+    order_number: string;
+    channel: string;
+    recipient: string;
+    status: string;
+    attempt: number;
+    rate_limited: boolean;
+    error_message: string | null;
+    payload_preview: string;
+    delivered_at?: string | null;
+  },
+) {
+  if (!notificationLogAvailable) {
+    return;
+  }
+
+  const { error } = await supabase.from("notification_logs").insert(entry);
+
+  if (error) {
+    if (error.code === "PGRST205" || error.message.includes("Could not find the table")) {
+      notificationLogAvailable = false;
+      return;
+    }
+
+    console.error("Notification audit log failed:", error.message);
+  }
+}
+
 async function sendTelegramMessageWithRetry(
+  supabase: ReturnType<typeof createSupabaseAdmin>,
   botToken: string,
   chatId: string,
   payload: {
@@ -61,9 +95,12 @@ async function sendTelegramMessageWithRetry(
     total_amount: number;
     created_at: string;
     utm_source: string | null;
+    retailcrm_base_url?: string | null;
     raw_payload: OrderRecordInput["raw_payload"];
   },
 ) {
+  const orderNumber = extractOrderNumber(payload.raw_payload, payload.external_id);
+
   for (let attempt = 1; attempt <= TELEGRAM_MAX_ATTEMPTS; attempt += 1) {
     const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
       method: "POST",
@@ -79,6 +116,18 @@ async function sendTelegramMessageWithRetry(
     });
 
     if (response.ok) {
+      await recordNotificationLog(supabase, {
+        order_retailcrm_id: payload.retailcrm_id,
+        order_number: orderNumber,
+        channel: "telegram",
+        recipient: chatId,
+        status: "sent",
+        attempt,
+        rate_limited: false,
+        error_message: null,
+        payload_preview: formatTelegramMessage(payload),
+        delivered_at: new Date().toISOString(),
+      });
       return;
     }
 
@@ -86,9 +135,34 @@ async function sendTelegramMessageWithRetry(
     const retryAfter = Number(errorPayload?.parameters?.retry_after ?? 1);
 
     if (response.status === 429 && attempt < TELEGRAM_MAX_ATTEMPTS) {
+      await recordNotificationLog(supabase, {
+        order_retailcrm_id: payload.retailcrm_id,
+        order_number: orderNumber,
+        channel: "telegram",
+        recipient: chatId,
+        status: "rate_limited",
+        attempt,
+        rate_limited: true,
+        error_message: errorPayload?.description ?? "Telegram rate limit",
+        payload_preview: formatTelegramMessage(payload),
+        delivered_at: null,
+      });
       await sleep((retryAfter + 1) * 1000);
       continue;
     }
+
+    await recordNotificationLog(supabase, {
+      order_retailcrm_id: payload.retailcrm_id,
+      order_number: orderNumber,
+      channel: "telegram",
+      recipient: chatId,
+      status: "failed",
+      attempt,
+      rate_limited: response.status === 429,
+      error_message: errorPayload?.description ?? `HTTP ${response.status}`,
+      payload_preview: formatTelegramMessage(payload),
+      delivered_at: null,
+    });
 
     throw new Error(
       `Telegram sendMessage failed with ${response.status}${
@@ -134,7 +208,7 @@ async function sendTelegramNotifications() {
   }
 
   for (const row of data ?? []) {
-    await sendTelegramMessageWithRetry(botToken, chatId, {
+    await sendTelegramMessageWithRetry(supabase, botToken, chatId, {
       retailcrm_id: Number(row.retailcrm_id),
       external_id: row.external_id ? String(row.external_id) : null,
       customer_name: String(row.customer_name),
@@ -144,6 +218,7 @@ async function sendTelegramNotifications() {
       total_amount: Number(row.total_amount),
       created_at: String(row.created_at),
       utm_source: row.utm_source ? String(row.utm_source) : null,
+      retailcrm_base_url: process.env.RETAILCRM_BASE_URL?.trim() ?? null,
       raw_payload: row.raw_payload as OrderRecordInput["raw_payload"],
     });
 

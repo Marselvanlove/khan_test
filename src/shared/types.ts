@@ -153,6 +153,7 @@ export interface TelegramOrderContext {
   total_amount: number;
   created_at: string;
   utm_source: string | null;
+  retailcrm_base_url?: string | null;
   raw_payload: RetailCrmOrderResponse;
 }
 
@@ -179,10 +180,63 @@ export interface DashboardSummary {
   highValueOrders: number;
   freeShippingOrders: number;
   premiumExpressOrders: number;
+  unknownSourceOrders: number;
+  ordersWithoutContact: number;
 }
 
 export interface SourceMetric {
   source: string;
   orders: number;
   revenue: number;
+}
+
+export interface OrderLineItem {
+  name: string;
+  quantity: number;
+}
+
+export interface StatusSummaryItem {
+  group: string;
+  label: string;
+  count: number;
+}
+
+export interface NotificationLogItem {
+  order_retailcrm_id: number;
+  order_number: string | null;
+  channel: string;
+  recipient: string | null;
+  status: string;
+  attempt: number;
+  rate_limited: boolean;
+  error_message: string | null;
+  created_at: string;
+  delivered_at: string | null;
+}
+
+export interface OperationalOrderRow {
+  retailcrm_id: number;
+  crm_number: string;
+  external_id: string | null;
+  customer_name: string;
+  phone: string | null;
+  whatsapp_url: string | null;
+  email: string | null;
+  city: string | null;
+  address: string | null;
+  total_amount: number;
+  created_at: string;
+  utm_source: string | null;
+  source_label: string;
+  status_code: string | null;
+  status_label: string;
+  status_group: string;
+  status_group_label: string;
+  segment_code: "under-35" | "free-shipping" | "high-value" | "premium-express";
+  segment_label: string;
+  sla_label: string;
+  retailcrm_url: string | null;
+  items: OrderLineItem[];
+  missing_contact: boolean;
+  unknown_source: boolean;
 }

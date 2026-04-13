@@ -1,7 +1,9 @@
 import { OrderChart } from "@/components/order-chart";
-import { OrdersTable } from "@/components/orders-table";
+import { NotificationLogList } from "@/components/notification-log-list";
+import { OrderQueue } from "@/components/order-queue";
 import { SourceBreakdown } from "@/components/source-breakdown";
 import { StatCard } from "@/components/stat-card";
+import { StatusBreakdown } from "@/components/status-breakdown";
 import { formatCurrencyKzt } from "@/shared/orders";
 import { getDashboardData } from "@/lib/dashboard";
 
@@ -37,63 +39,113 @@ export default async function HomePage() {
         <>
           <section className="stats-grid">
             <StatCard
-              eyebrow="Total Orders"
+              eyebrow="Всего заказов"
               value={String(data.summary.totalOrders)}
               hint="Все заказы, подтянутые из RetailCRM."
             />
             <StatCard
-              eyebrow="Total Revenue"
+              eyebrow="Выручка"
               value={formatCurrencyKzt(data.summary.totalRevenue)}
               hint="Суммарная выручка по всем заказам."
             />
             <StatCard
-              eyebrow="High Value > 50k"
+              eyebrow="Крупные 50k+"
               value={String(data.summary.highValueOrders)}
               hint="Заказы с суммой выше 50 000 ₸."
               tone="accent"
             />
             <StatCard
-              eyebrow="Free Shipping 35k+"
+              eyebrow="Порог 35k+"
               value={String(data.summary.freeShippingOrders)}
               hint="Заказы, которые уже дотягивают до бесплатной доставки."
             />
             <StatCard
-              eyebrow="Express 60k+"
+              eyebrow="Premium 60k+"
               value={String(data.summary.premiumExpressOrders)}
               hint="Премиум-сегмент, где можно дать бесплатный экспресс."
+            />
+            <StatCard
+              eyebrow="Неизвестный источник"
+              value={String(data.summary.unknownSourceOrders)}
+              hint="Заказы, где маркетинг теряет атрибуцию."
+            />
+            <StatCard
+              eyebrow="Без контакта"
+              value={String(data.summary.ordersWithoutContact)}
+              hint="Заказы без телефона и email. Это оперативный риск."
             />
           </section>
 
           <OrderChart metrics={data.metrics} />
 
           <section className="grid-2">
-            <SourceBreakdown rows={data.sourceMetrics} />
-            <OrdersTable
+            <SourceBreakdown
+              rows={data.sourceMetrics}
+              title="Источники всех заказов"
+              caption="Источники"
+              description="Весь поток заказов по каналам. Нужен владельцу и маркетингу."
+            />
+            <StatusBreakdown rows={data.statusSummary} />
+          </section>
+
+          <NotificationLogList rows={data.notificationLogs} />
+
+          <section className="grid-2">
+            <SourceBreakdown
+              rows={data.highValueSourceMetrics}
+              title="Источники крупных заказов"
+              caption="Крупные источники"
+              description="Показывает, какие каналы приводят дорогую корзину."
+            />
+            <OrderQueue
               title="Последние заказы"
-              caption="Recent Orders"
+              caption="Лента"
+              description="Короткая лента для менеджера: кого брать в работу первым."
               rows={data.recentOrders}
+              emptyText="Последних заказов пока нет."
+            />
+          </section>
+
+          <OrderQueue
+            title="Очередь крупных заказов"
+            caption="Приоритет"
+            description="Главная очередь для менеджера: клиент, товары, адрес, канал и быстрые действия."
+            rows={data.highValueOrders.slice(0, 8)}
+            emptyText="Крупных заказов выше 50 000 ₸ сейчас нет."
+          />
+
+          <section className="grid-2">
+            <OrderQueue
+              title="Апселл до high-value"
+              caption="Апселл"
+              description="Клиенты уже близко к порогу. Здесь менеджер может увеличить средний чек."
+              rows={data.upsellOrders.slice(0, 6)}
+              emptyText="Кандидатов на апселл сейчас нет."
+            />
+            <OrderQueue
+              title="Premium / Express"
+              caption="Premium"
+              description="Премиальный сегмент. Здесь важны скорость реакции и качество сервиса."
+              rows={data.premiumOrders.slice(0, 6)}
+              emptyText="Премиальных заказов сейчас нет."
             />
           </section>
 
           <section className="grid-2">
-            <OrdersTable
-              title="High-value заказы"
-              caption="Alert Queue"
-              rows={data.highValueOrders}
+            <OrderQueue
+              title="Заказы без контакта"
+              caption="Риск"
+              description="Операционный риск: менеджер не сможет быстро связаться с клиентом."
+              rows={data.ordersWithoutContact.slice(0, 6)}
+              emptyText="Во всех заказах есть телефон или email."
             />
-            <section className="panel insight-panel">
-              <div className="panel-heading">
-                <div>
-                  <p className="panel-eyebrow">Tomyris Fit</p>
-                  <h2>Почему это решение подходит бренду</h2>
-                </div>
-              </div>
-              <div className="insight-list">
-                <p>Суммы оформлены в ₸ и учитывают реальные пороги доставки Tomyris.</p>
-                <p>Источники заказов показывают вклад Instagram, direct, Google и referral.</p>
-                <p>Alert на `50k+` закрывает ТЗ, а сегменты `35k+` и `60k+` дают бизнес-контекст.</p>
-              </div>
-            </section>
+            <OrderQueue
+              title="Потерянная атрибуция"
+              caption="Маркетинг"
+              description="Сюда попадают заказы без понятного источника. Это дыра в маркетинговой аналитике."
+              rows={data.unknownSourceOrders.slice(0, 6)}
+              emptyText="Во всех заказах источник определён."
+            />
           </section>
         </>
       )}

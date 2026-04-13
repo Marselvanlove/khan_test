@@ -3,19 +3,25 @@ import type { SourceMetric } from "@/shared/types";
 
 interface SourceBreakdownProps {
   rows: SourceMetric[];
+  title?: string;
+  caption?: string;
+  description?: string;
 }
 
-export function SourceBreakdown({ rows }: SourceBreakdownProps) {
+export function SourceBreakdown({
+  rows,
+  title = "Источники заказов",
+  caption = "Acquisition",
+  description = "Tomyris строит спрос через social-driven каналы, поэтому `utm_source` здесь ключевой.",
+}: SourceBreakdownProps) {
   return (
     <section className="panel">
       <div className="panel-heading">
         <div>
-          <p className="panel-eyebrow">Acquisition</p>
-          <h2>Источники заказов</h2>
+          <p className="panel-eyebrow">{caption}</p>
+          <h2>{title}</h2>
         </div>
-        <p className="panel-caption">
-          Tomyris строит спрос через social-driven каналы, поэтому `utm_source` здесь ключевой.
-        </p>
+        <p className="panel-caption">{description}</p>
       </div>
 
       {rows.length ? (

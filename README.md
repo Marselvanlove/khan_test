@@ -10,6 +10,7 @@
 - `supabase/migrations` — схема таблицы `orders` и view `daily_order_metrics`.
 - `supabase/functions/sync-retailcrm` — Edge Function для автосинка и уведомлений.
 - `supabase/cron.sql.example` — шаблон SQL для cron-запуска Edge Function раз в минуту.
+- `docs/tomyris-manager-ops-research.md` — исследование болей менеджеров и 20 улучшений продукта.
 
 ## Архитектура
 
@@ -92,6 +93,7 @@ npm run import:retailcrm
 Через SQL Editor выполни файл:
 
 - `supabase/migrations/20260413182000_init_orders.sql`
+- `supabase/migrations/20260413194500_notification_logs.sql`
 
 ### 2. Ручной синк
 
@@ -173,7 +175,7 @@ git push -u origin main
 - `RetailCRM`: 50 mock-заказов успешно импортированы в магазин `xmamyrov`
 - `Telegram`: тестовое сообщение успешно отправлено в группу `tomyris` (`chat_id=-1003953849238`)
 - `GitHub`: код опубликован в `main` ветку репозитория `Marselvanlove/khan_test`
-- `Supabase`: secret key валиден для REST-доступа, но schema `public.orders` ещё не создана
+- `Supabase`: `orders` и `daily_order_metrics` заполнены, `utm_source` backfill выполнен
 - `Vercel`: git-репозиторий готов, но сам Vercel project ещё не создан и env vars туда не заведены
 
 ## Промпты для AI-инструмента
@@ -192,11 +194,10 @@ git push -u origin main
 - `utm_source`: нельзя полагаться на наличие кастомного поля в демо-аккаунте. Решение: поддержать опциональный `RETAILCRM_UTM_FIELD_CODE`, а без него сохранять `utm_source` в `customerComment`.
 - `Автоуведомления`: на `Vercel Hobby` cron не подходит для near-real-time. Решение: использовать `Supabase Edge Function + pg_cron`.
 - `Tomyris context`: ТЗ выглядит общим, но реальный сайт бренда даёт более правильные бизнес-ориентиры. Решение: добавить сегменты `35k+` и `60k+`, не ломая основной alert `50k+`.
+- `Manager context`: данные клиента и заказа были в БД, но терялись в продукте. Решение: перевести уведомления и дашборд на реальный операционный контекст из `raw_payload`.
 
 ## Что ещё нужно сделать руками
 
-- Выполнить SQL из `supabase/migrations/20260413182000_init_orders.sql` через Supabase SQL Editor или с реальным DB password
-- Повторить `npm run sync:retailcrm` после создания таблицы `orders`
 - Забрать скриншот сообщения из Telegram-группы
 - Подключить `https://github.com/Marselvanlove/khan_test` в Vercel и завести env vars проекта
 - Добавить финальный `Vercel URL` в этот README
