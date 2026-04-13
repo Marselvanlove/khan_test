@@ -50,10 +50,13 @@ async function sendTelegramMessageWithRetry(
     retailcrm_id: number;
     external_id: string | null;
     customer_name: string;
+    phone: string | null;
+    email: string | null;
     city: string | null;
     total_amount: number;
     created_at: string;
     utm_source: string | null;
+    raw_payload: OrderRecordInput["raw_payload"];
   },
 ) {
   for (let attempt = 1; attempt <= TELEGRAM_MAX_ATTEMPTS; attempt += 1) {
@@ -65,6 +68,8 @@ async function sendTelegramMessageWithRetry(
       body: JSON.stringify({
         chat_id: chatId,
         text: formatTelegramMessage(payload),
+        parse_mode: "HTML",
+        disable_web_page_preview: true,
       }),
     });
 
@@ -113,7 +118,7 @@ async function sendTelegramNotifications() {
   const supabase = createSupabaseAdmin();
   const { data, error } = await supabase
     .from("orders")
-    .select("retailcrm_id, external_id, customer_name, city, total_amount, created_at, utm_source")
+    .select("retailcrm_id, external_id, customer_name, phone, email, city, total_amount, created_at, utm_source, raw_payload")
     .gt("total_amount", HIGH_VALUE_THRESHOLD)
     .is("telegram_notified_at", null)
     .order("created_at", { ascending: false });
@@ -129,10 +134,13 @@ async function sendTelegramNotifications() {
       retailcrm_id: Number(row.retailcrm_id),
       external_id: row.external_id ? String(row.external_id) : null,
       customer_name: String(row.customer_name),
+      phone: row.phone ? String(row.phone) : null,
+      email: row.email ? String(row.email) : null,
       city: row.city ? String(row.city) : null,
       total_amount: Number(row.total_amount),
       created_at: String(row.created_at),
       utm_source: row.utm_source ? String(row.utm_source) : null,
+      raw_payload: row.raw_payload as OrderRecordInput["raw_payload"],
     });
 
     const { error: updateError } = await supabase

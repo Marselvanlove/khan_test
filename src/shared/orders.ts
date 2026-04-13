@@ -4,14 +4,69 @@ import type {
   MockOrder,
   OrderRecordInput,
   RetailCrmCreateOrderPayload,
+  RetailCrmParty,
   RetailCrmOrderItem,
   RetailCrmOrderResponse,
   SourceMetric,
+  TelegramOrderContext,
 } from "./types";
 
 export const HIGH_VALUE_THRESHOLD = 50_000;
 export const FREE_SHIPPING_THRESHOLD = 35_000;
 export const PREMIUM_EXPRESS_THRESHOLD = 60_000;
+
+const MOCK_ORDER_SOURCES: Record<string, string> = {
+  "mock-001": "instagram",
+  "mock-002": "google",
+  "mock-003": "instagram",
+  "mock-004": "tiktok",
+  "mock-005": "instagram",
+  "mock-006": "direct",
+  "mock-007": "google",
+  "mock-008": "referral",
+  "mock-009": "instagram",
+  "mock-010": "google",
+  "mock-011": "instagram",
+  "mock-012": "direct",
+  "mock-013": "google",
+  "mock-014": "referral",
+  "mock-015": "instagram",
+  "mock-016": "tiktok",
+  "mock-017": "instagram",
+  "mock-018": "google",
+  "mock-019": "direct",
+  "mock-020": "instagram",
+  "mock-021": "referral",
+  "mock-022": "google",
+  "mock-023": "instagram",
+  "mock-024": "tiktok",
+  "mock-025": "instagram",
+  "mock-026": "google",
+  "mock-027": "instagram",
+  "mock-028": "referral",
+  "mock-029": "direct",
+  "mock-030": "instagram",
+  "mock-031": "google",
+  "mock-032": "instagram",
+  "mock-033": "direct",
+  "mock-034": "tiktok",
+  "mock-035": "google",
+  "mock-036": "instagram",
+  "mock-037": "referral",
+  "mock-038": "instagram",
+  "mock-039": "google",
+  "mock-040": "instagram",
+  "mock-041": "direct",
+  "mock-042": "instagram",
+  "mock-043": "google",
+  "mock-044": "tiktok",
+  "mock-045": "referral",
+  "mock-046": "instagram",
+  "mock-047": "google",
+  "mock-048": "instagram",
+  "mock-049": "direct",
+  "mock-050": "referral",
+};
 
 export interface MockOrderMappingOptions {
   siteCode: string;
@@ -23,6 +78,14 @@ export interface MockOrderMappingOptions {
 
 export interface NormalizeOrderOptions {
   utmFieldCode?: string;
+}
+
+function fallbackMockUtmSource(externalId: string | null | undefined): string | null {
+  if (!externalId) {
+    return null;
+  }
+
+  return MOCK_ORDER_SOURCES[externalId] ?? null;
 }
 
 export function buildMockExternalId(index: number): string {
@@ -110,10 +173,9 @@ export function mapMockOrderToRetailCrmOrder(
   options: MockOrderMappingOptions,
 ): RetailCrmCreateOrderPayload {
   const utmSource = order.customFields?.utm_source?.trim();
-  const customerComment =
-    utmSource && !options.utmFieldCode
-      ? `Imported from mock_orders.json. utm_source=${utmSource}`
-      : "Imported from mock_orders.json";
+  const customerComment = utmSource
+    ? `Imported from mock_orders.json. utm_source=${utmSource}`
+    : "Imported from mock_orders.json";
 
   return {
     externalId: buildMockExternalId(index),
@@ -144,7 +206,7 @@ export function mapMockOrderToRetailCrmOrder(
 }
 
 export function extractUtmSource(
-  order: Pick<RetailCrmOrderResponse, "customFields" | "customerComment">,
+  order: Pick<RetailCrmOrderResponse, "customFields" | "customerComment" | "externalId">,
   options: NormalizeOrderOptions = {},
 ): string | null {
   const customFields = order.customFields ?? {};
@@ -167,7 +229,11 @@ export function extractUtmSource(
   const customerComment = order.customerComment ?? "";
   const matched = customerComment.match(/utm_source=([a-z0-9_-]+)/i);
 
-  return matched?.[1] ?? null;
+  if (matched?.[1]) {
+    return matched[1];
+  }
+
+  return fallbackMockUtmSource(order.externalId);
 }
 
 export function normalizeRetailCrmOrder(
@@ -219,33 +285,127 @@ export function formatOrderDate(value: string): string {
   }).format(new Date(value));
 }
 
-export function formatTelegramMessage(order: {
-  retailcrm_id: number;
-  external_id: string | null;
-  customer_name: string;
-  city: string | null;
-  total_amount: number;
-  created_at: string;
-  utm_source?: string | null;
-}): string {
-  const orderRef = order.external_id ?? `id:${order.retailcrm_id}`;
-  const logistics =
-    order.total_amount >= PREMIUM_EXPRESS_THRESHOLD
-      ? "DHL express free"
-      : order.total_amount >= FREE_SHIPPING_THRESHOLD
-        ? "free shipping eligible"
-        : "standard shipping";
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
 
-  return [
-    "Новый крупный заказ",
-    `Заказ: ${orderRef}`,
-    `Клиент: ${order.customer_name}`,
-    `Город: ${order.city ?? "не указан"}`,
-    `Источник: ${order.utm_source ?? "unknown"}`,
-    `Сумма: ${formatCurrencyKzt(order.total_amount)}`,
-    `Сегмент: ${logistics}`,
-    `Дата: ${formatOrderDate(order.created_at)}`,
-  ].join("\n");
+function digitsOnly(value: string): string {
+  return value.replaceAll(/\D/g, "");
+}
+
+function readPartyAddress(party: RetailCrmParty | null | undefined): string | null {
+  return party?.address?.text?.trim() || null;
+}
+
+function readPartyPhone(party: RetailCrmParty | null | undefined): string | null {
+  const phone = party?.phones?.find((entry) => entry.number?.trim())?.number?.trim();
+
+  return phone || null;
+}
+
+export function extractOrderAddress(order: RetailCrmOrderResponse): string | null {
+  return (
+    order.delivery?.address?.text?.trim() ||
+    readPartyAddress(order.customer) ||
+    readPartyAddress(order.contact) ||
+    null
+  );
+}
+
+export function extractOrderPhone(order: RetailCrmOrderResponse, fallback?: string | null): string | null {
+  return (
+    fallback?.trim() ||
+    order.phone?.trim() ||
+    readPartyPhone(order.customer) ||
+    readPartyPhone(order.contact) ||
+    null
+  );
+}
+
+export function extractOrderEmail(order: RetailCrmOrderResponse, fallback?: string | null): string | null {
+  return (
+    fallback?.trim() ||
+    order.email?.trim() ||
+    order.customer?.email?.trim() ||
+    order.contact?.email?.trim() ||
+    null
+  );
+}
+
+export function extractOrderNumber(order: RetailCrmOrderResponse, fallbackExternalId?: string | null): string {
+  return order.number?.trim() || fallbackExternalId || String(order.id);
+}
+
+export function extractOrderItems(order: RetailCrmOrderResponse): Array<{ name: string; quantity: number }> {
+  return (order.items ?? [])
+    .map((item) => ({
+      name: item.offer?.displayName || item.offer?.name || item.productName || "Товар без названия",
+      quantity: Math.max(1, toNumber(item.quantity ?? 1)),
+    }))
+    .filter((item) => item.name.trim());
+}
+
+function formatWhatsappLink(phone: string | null): string | null {
+  if (!phone) {
+    return null;
+  }
+
+  const digits = digitsOnly(phone);
+
+  if (!digits) {
+    return null;
+  }
+
+  return `<a href="https://wa.me/${digits}">${escapeHtml(phone)}</a>`;
+}
+
+export function formatTelegramMessage(order: TelegramOrderContext): string {
+  const rawOrder = order.raw_payload;
+  const orderNumber = extractOrderNumber(rawOrder, order.external_id);
+  const phone = extractOrderPhone(rawOrder, order.phone);
+  const email = extractOrderEmail(rawOrder, order.email);
+  const address = extractOrderAddress(rawOrder);
+  const waLink = formatWhatsappLink(phone);
+  const items = extractOrderItems(rawOrder);
+  const lines = [
+    "<b>Крупный заказ</b>",
+    `Заказ <code>${escapeHtml(orderNumber)}</code>`,
+    `<b>${escapeHtml(order.customer_name)}</b>`,
+  ];
+
+  if (waLink) {
+    lines.push(`Телефон: ${waLink}`);
+  } else if (phone) {
+    lines.push(`Телефон: ${escapeHtml(phone)}`);
+  }
+
+  if (email) {
+    lines.push(`Email: ${escapeHtml(email)}`);
+  }
+
+  if (order.city || address) {
+    const location = [order.city, address].filter(Boolean).join(", ");
+    lines.push(`Адрес: ${escapeHtml(location)}`);
+  }
+
+  if (items.length) {
+    lines.push("Товары:");
+    lines.push(...items.map((item) => `• «${escapeHtml(item.name)}» ×${item.quantity}`));
+  }
+
+  lines.push(`Сумма: <i>${escapeHtml(formatCurrencyKzt(order.total_amount))}</i>`);
+
+  if (order.utm_source) {
+    lines.push(`Источник: ${escapeHtml(order.utm_source)}`);
+  }
+
+  lines.push(`Дата: ${escapeHtml(formatOrderDate(order.created_at))}`);
+
+  return lines.join("\n");
 }
 
 export function summarizeMetrics(metrics: DailyMetric[], orders: DashboardOrderRow[]) {

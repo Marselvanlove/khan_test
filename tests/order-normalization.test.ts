@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
   buildMockExternalId,
+  extractOrderAddress,
   formatTelegramMessage,
   isHighValueOrder,
   mapMockOrderToRetailCrmOrder,
@@ -73,18 +74,46 @@ test("normalizeRetailCrmOrder calculates totals and extracts utm", () => {
   assert.equal(isHighValueOrder(normalized.total_amount), true);
 });
 
-test("formatTelegramMessage includes amount and customer name", () => {
+test("formatTelegramMessage includes contact, address and items", () => {
+  const rawOrder: RetailCrmOrderResponse = {
+    id: 1,
+    number: "65A",
+    externalId: "mock-050",
+    phone: "+77001234567",
+    email: "client@example.com",
+    delivery: {
+      address: {
+        city: "Алматы",
+        text: "пр. Абая 10, кв 5",
+      },
+    },
+    items: [
+      {
+        productName: "Nova Slim",
+        quantity: 2,
+        initialPrice: 42000,
+        offer: {
+          displayName: "Утягивающий комбидресс Nova Slim",
+        },
+      },
+    ],
+  };
   const text = formatTelegramMessage({
     retailcrm_id: 1,
     external_id: "mock-050",
     customer_name: "Толкын Жумагулова",
+    phone: "+77001234567",
+    email: "client@example.com",
     city: "Алматы",
     total_amount: 84000,
     created_at: "2026-04-13T10:00:00.000Z",
+    utm_source: "instagram",
+    raw_payload: rawOrder,
   });
 
-  assert.match(text, /mock-050/);
-  assert.match(text, /Толкын Жумагулова/);
-  assert.match(text, /84/);
+  assert.match(text, /<b>Толкын Жумагулова<\/b>/);
+  assert.match(text, /wa\.me\/77001234567/);
+  assert.match(text, /«Утягивающий комбидресс Nova Slim» ×2/);
+  assert.match(text, /<i>/);
+  assert.equal(extractOrderAddress(rawOrder), "пр. Абая 10, кв 5");
 });
-

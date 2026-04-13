@@ -29,7 +29,27 @@ export interface RetailCrmOrderItem {
   offer?: {
     externalId?: string;
     name?: string;
+    displayName?: string;
   };
+}
+
+export interface RetailCrmAddress {
+  city?: string | null;
+  text?: string | null;
+  countryIso?: string | null;
+}
+
+export interface RetailCrmPhone {
+  number?: string | null;
+}
+
+export interface RetailCrmParty {
+  id?: number;
+  firstName?: string | null;
+  lastName?: string | null;
+  email?: string | null;
+  phones?: RetailCrmPhone[];
+  address?: RetailCrmAddress;
 }
 
 export interface RetailCrmCreateOrderPayload {
@@ -63,6 +83,7 @@ export interface RetailCrmCreateOrderPayload {
 
 export interface RetailCrmOrderResponse {
   id: number;
+  number?: string | null;
   externalId?: string | null;
   firstName?: string | null;
   lastName?: string | null;
@@ -76,11 +97,10 @@ export interface RetailCrmOrderResponse {
   customerComment?: string | null;
   items?: RetailCrmOrderItem[];
   delivery?: {
-    address?: {
-      city?: string | null;
-      text?: string | null;
-    };
+    address?: RetailCrmAddress;
   };
+  customer?: RetailCrmParty | null;
+  contact?: RetailCrmParty | null;
   customFields?: Record<string, unknown> | null;
 }
 
@@ -120,6 +140,19 @@ export interface OrderRecordInput {
   total_amount: number;
   created_at: string;
   updated_at: string;
+  raw_payload: RetailCrmOrderResponse;
+}
+
+export interface TelegramOrderContext {
+  retailcrm_id: number;
+  external_id: string | null;
+  customer_name: string;
+  phone: string | null;
+  email: string | null;
+  city: string | null;
+  total_amount: number;
+  created_at: string;
+  utm_source: string | null;
   raw_payload: RetailCrmOrderResponse;
 }
 
