@@ -168,6 +168,14 @@ git push -u origin main
 - `GitHub URL`: `https://github.com/Marselvanlove/khan_test`
 - `Telegram screenshot`: `TODO`
 
+## Текущий статус
+
+- `RetailCRM`: 50 mock-заказов успешно импортированы в магазин `xmamyrov`
+- `Telegram`: тестовое сообщение успешно отправлено в группу `tomyris` (`chat_id=-1003953849238`)
+- `GitHub`: код опубликован в `main` ветку репозитория `Marselvanlove/khan_test`
+- `Supabase`: secret key валиден для REST-доступа, но schema `public.orders` ещё не создана
+- `Vercel`: git-репозиторий готов, но сам Vercel project ещё не создан и env vars туда не заведены
+
 ## Промпты для AI-инструмента
 
 Ниже список основных запросов, которыми велась реализация через AI-инструмент:
@@ -187,9 +195,8 @@ git push -u origin main
 
 ## Что ещё нужно сделать руками
 
-- Подставить реальные ключи и URL в `.env.local`
-- Выполнить миграцию в Supabase
-- Загрузить 50 заказов в RetailCRM
-- Запустить первый sync
-- Задеплоить фронт на Vercel
-- Добавить финальные ссылки и скриншот в этот README
+- Выполнить SQL из `supabase/migrations/20260413182000_init_orders.sql` через Supabase SQL Editor или с реальным DB password
+- Повторить `npm run sync:retailcrm` после создания таблицы `orders`
+- Забрать скриншот сообщения из Telegram-группы
+- Подключить `https://github.com/Marselvanlove/khan_test` в Vercel и завести env vars проекта
+- Добавить финальный `Vercel URL` в этот README
