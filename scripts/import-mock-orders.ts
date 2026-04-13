@@ -27,9 +27,31 @@ async function readMockOrders(): Promise<MockOrder[]> {
   return JSON.parse(file) as MockOrder[];
 }
 
+function readCliOption(name: string): string | null {
+  const prefix = `--${name}=`;
+  const direct = process.argv.find((arg) => arg.startsWith(prefix));
+
+  if (direct) {
+    return direct.slice(prefix.length);
+  }
+
+  const index = process.argv.indexOf(`--${name}`);
+
+  if (index >= 0) {
+    return process.argv[index + 1] ?? null;
+  }
+
+  return null;
+}
+
 async function main() {
   const dryRun = process.argv.includes("--dry-run");
   const orders = await readMockOrders();
+  const startIndex = Math.max(0, Number(readCliOption("index") ?? 0));
+  const requestedLimit = Number(readCliOption("limit") ?? orders.length);
+  const limit = Number.isFinite(requestedLimit) && requestedLimit > 0 ? requestedLimit : orders.length;
+  const externalIdPrefix = readCliOption("external-id-prefix")?.trim() || undefined;
+  const selectedOrders = orders.slice(startIndex, startIndex + limit);
 
   const retailCrm = createRetailCrmClient({
     baseUrl: readRequiredEnv("RETAILCRM_BASE_URL"),
@@ -43,13 +65,14 @@ async function main() {
     failed: 0,
   };
 
-  for (const [index, order] of orders.entries()) {
-    const payload = mapMockOrderToRetailCrmOrder(order, index, orders.length, {
+  for (const [offset, order] of selectedOrders.entries()) {
+    const payload = mapMockOrderToRetailCrmOrder(order, startIndex + offset, orders.length, {
       siteCode: readRequiredEnv("RETAILCRM_SITE_CODE"),
       orderType: process.env.RETAILCRM_ORDER_TYPE,
       orderMethod: process.env.RETAILCRM_ORDER_METHOD,
       status: process.env.RETAILCRM_STATUS,
       utmFieldCode: process.env.RETAILCRM_UTM_FIELD_CODE,
+      externalIdPrefix,
     });
 
     if (dryRun) {
@@ -75,6 +98,7 @@ async function main() {
   }
 
   console.log("\nImport summary");
+  console.log(`selected=${selectedOrders.length}`);
   console.log(`created=${stats.created}`);
   console.log(`skipped=${stats.skipped}`);
   console.log(`failed=${stats.failed}`);
@@ -84,4 +108,3 @@ main().catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });
-

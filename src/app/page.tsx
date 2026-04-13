@@ -1,194 +1,116 @@
-import { AdminSettingsPanel } from "@/components/admin-settings-panel";
-import { OrderChart } from "@/components/order-chart";
-import { NotificationLogList } from "@/components/notification-log-list";
-import { OrderQueue } from "@/components/order-queue";
-import { SourceBreakdown } from "@/components/source-breakdown";
-import { StatCard } from "@/components/stat-card";
-import { StatusBreakdown } from "@/components/status-breakdown";
-import { formatCurrencyKzt } from "@/shared/orders";
+import { ActivityIcon, BarChart3Icon, CircleDollarSignIcon, Settings2Icon, WorkflowIcon } from "lucide-react";
+import { cookies } from "next/headers";
+import { FinanceTab } from "@/components/finance-tab";
+import { GraphsTab } from "@/components/graphs-tab";
+import { MarketingTab } from "@/components/marketing-tab";
+import { OperationsTab } from "@/components/operations-tab";
+import { SummaryToggleSection } from "@/components/summary-toggle-section";
+import { SystemTab } from "@/components/system-tab";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { getDashboardData } from "@/lib/dashboard";
 
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
+  const cookieStore = await cookies();
   const data = await getDashboardData();
+  const summaryVisibleCookie = cookieStore.get("dashboard-summary-visible")?.value;
+  const isSummaryVisible = summaryVisibleCookie !== "0";
 
   return (
-    <main className="page-shell">
-      <section className="hero">
-        <div className="hero-copy">
-          <p className="hero-kicker">Tomyris • RetailCRM → Supabase → Vercel</p>
-          <h1>Операционный дашборд заказов для Tomyris</h1>
-          <p className="hero-text">
-            Серверная витрина по заказам fashion e-commerce бренда из Казахстана: social-channel
-            acquisition, пороги доставки `35 000 ₸` и `60 000 ₸`, плюс управляемые
-            Telegram-уведомления по сумме, рабочему окну, часовому поясу и операционным рискам.
-          </p>
-        </div>
+    <main className="mx-auto flex min-h-screen max-w-[1480px] flex-col gap-6 px-4 py-6 md:px-6 lg:px-8">
+      <section>
+        <h1 className="max-w-5xl text-balance text-4xl font-semibold tracking-tight sm:text-5xl">
+          Дашборд заказов Tomyris
+        </h1>
       </section>
 
       {!data.ok ? (
-        <section className="panel empty-panel">
-          <p className="panel-eyebrow">{data.reason === "missing-env" ? "Setup required" : "Query failed"}</p>
-          <h2>{data.message}</h2>
-          <p>
-            Для наполнения дашборда нужны рабочие переменные окружения Supabase и выполненная
-            миграция из каталога `supabase/migrations`.
-          </p>
-        </section>
+        <Card className="border-destructive/20 bg-card/90 shadow-sm">
+          <CardHeader>
+            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-destructive">
+              Query failed
+            </p>
+            <CardTitle>{data.message}</CardTitle>
+            <CardDescription>
+              Проверь `Supabase`, локальные env vars и миграции. После этого экран снова наполнится
+              данными.
+            </CardDescription>
+          </CardHeader>
+        </Card>
       ) : (
         <>
-          <AdminSettingsPanel settings={data.adminSettings} overview={data.notificationOverview} />
-
-          <section className="stats-grid">
-            <StatCard
-              eyebrow="Всего заказов"
-              value={String(data.summary.totalOrders)}
-              hint="Все заказы, подтянутые из RetailCRM."
-            />
-            <StatCard
-              eyebrow="Выручка"
-              value={formatCurrencyKzt(data.summary.totalRevenue)}
-              hint="Суммарная выручка по всем заказам."
-            />
-            <StatCard
-              eyebrow={`Крупные ${Math.round(data.adminSettings.high_value_threshold / 1000)}k+`}
-              value={String(data.summary.highValueOrders)}
-              hint="Заказы, которые сейчас попадают под порог уведомления."
-              tone="accent"
-            />
-            <StatCard
-              eyebrow="Порог 35k+"
-              value={String(data.summary.freeShippingOrders)}
-              hint="Заказы, которые уже дотягивают до бесплатной доставки."
-            />
-            <StatCard
-              eyebrow="Premium 60k+"
-              value={String(data.summary.premiumExpressOrders)}
-              hint="Премиум-сегмент, где можно дать бесплатный экспресс."
-            />
-            <StatCard
-              eyebrow="Неизвестный источник"
-              value={String(data.summary.unknownSourceOrders)}
-              hint="Заказы, где маркетинг теряет атрибуцию."
-            />
-            <StatCard
-              eyebrow="Без контакта"
-              value={String(data.summary.ordersWithoutContact)}
-              hint="Заказы без телефона и email. Это оперативный риск."
-            />
-            <StatCard
-              eyebrow="Средний чек"
-              value={formatCurrencyKzt(data.ownerMetrics.averageOrderValue)}
-              hint="Качество потока, а не только его объём."
-            />
-            <StatCard
-              eyebrow="Заказы за 24 часа"
-              value={String(data.ownerMetrics.ordersLast24Hours)}
-              hint="Текущий темп входящего потока."
-            />
-            <StatCard
-              eyebrow="Отмена, %"
-              value={`${data.ownerMetrics.cancelRate.toFixed(1)}%`}
-              hint="Прямой индикатор потерь на процессе."
-            />
-            <StatCard
-              eyebrow="Согласование"
-              value={String(data.ownerMetrics.approvalBacklog)}
-              hint="Новые и ожидающие ответа заказы."
-            />
-            <StatCard
-              eyebrow="Доставка в работе"
-              value={String(data.ownerMetrics.deliveryInFlight)}
-              hint="Заказы, которые уже ушли в логистику."
-            />
-            <StatCard
-              eyebrow="Очередь алертов"
-              value={`${data.ownerMetrics.pendingOrders}/${data.ownerMetrics.pendingAlerts}`}
-              hint="Сначала число заказов, потом число событий к отправке."
-              tone="accent"
-            />
-          </section>
-
-          <OrderChart metrics={data.metrics} />
-
-          <section className="grid-2">
-            <SourceBreakdown
-              rows={data.sourceMetrics}
-              title="Источники всех заказов"
-              caption="Источники"
-              description="Весь поток заказов по каналам. Нужен владельцу и маркетингу."
-            />
-            <StatusBreakdown rows={data.statusSummary} />
-          </section>
-
-          <NotificationLogList rows={data.notificationLogs} />
-
-          <OrderQueue
-            title="Очередь уведомлений"
-            caption="Bot Queue"
-            description="Заказы, по которым бот ещё должен отправить хотя бы одно уведомление по текущим правилам."
-            rows={data.pendingNotificationOrders.slice(0, 8)}
-            emptyText="Очередь уведомлений пуста: активные сигналы уже обработаны."
+          <SummaryToggleSection
+            summary={data.summary}
+            ownerMetrics={data.ownerMetrics}
+            adminSettings={data.adminSettings}
+            initialVisible={isSummaryVisible}
           />
 
-          <section className="grid-2">
-            <SourceBreakdown
-              rows={data.highValueSourceMetrics}
-              title="Источники крупных заказов"
-              caption="Крупные источники"
-              description="Показывает, какие каналы приводят дорогую корзину."
-            />
-            <OrderQueue
-              title="Последние заказы"
-              caption="Лента"
-              description="Короткая лента для менеджера: кого брать в работу первым."
-              rows={data.recentOrders}
-              emptyText="Последних заказов пока нет."
-            />
-          </section>
+          <Tabs defaultValue="graphs" className="gap-6">
+            <Card className="sticky top-3 z-20 border-border/70 bg-card/85 shadow-sm backdrop-blur supports-[backdrop-filter]:backdrop-blur-md">
+              <CardContent className="flex flex-col gap-4 py-4">
+                <Separator />
+                <TabsList
+                  className="grid w-full grid-cols-2 gap-2 bg-transparent p-0 group-data-horizontal/tabs:h-auto sm:grid-cols-3 lg:grid-cols-5"
+                  variant="line"
+                >
+                  <TabsTrigger value="graphs" className="h-auto min-h-11 w-full justify-start gap-2 rounded-xl border border-border/70 bg-background/70 px-4 py-2.5 data-active:border-primary/40 data-active:bg-card">
+                    <ActivityIcon className="size-4" />
+                    Графики
+                  </TabsTrigger>
+                  <TabsTrigger value="operations" className="h-auto min-h-11 w-full justify-start gap-2 rounded-xl border border-border/70 bg-background/70 px-4 py-2.5 data-active:border-primary/40 data-active:bg-card">
+                    <WorkflowIcon className="size-4" />
+                    Операции
+                  </TabsTrigger>
+                  <TabsTrigger value="marketing" className="h-auto min-h-11 w-full justify-start gap-2 rounded-xl border border-border/70 bg-background/70 px-4 py-2.5 data-active:border-primary/40 data-active:bg-card">
+                    <BarChart3Icon className="size-4" />
+                    Маркетинг
+                  </TabsTrigger>
+                  <TabsTrigger value="finance" className="h-auto min-h-11 w-full justify-start gap-2 rounded-xl border border-border/70 bg-background/70 px-4 py-2.5 data-active:border-primary/40 data-active:bg-card">
+                    <CircleDollarSignIcon className="size-4" />
+                    Финансы
+                  </TabsTrigger>
+                  <TabsTrigger value="system" className="h-auto min-h-11 w-full justify-start gap-2 rounded-xl border border-border/70 bg-background/70 px-4 py-2.5 data-active:border-primary/40 data-active:bg-card">
+                    <Settings2Icon className="size-4" />
+                    Система
+                  </TabsTrigger>
+                </TabsList>
+              </CardContent>
+            </Card>
 
-          <OrderQueue
-            title="Очередь крупных заказов"
-            caption="Приоритет"
-            description="Главная очередь для менеджера: клиент, товары, адрес, канал и быстрые действия."
-            rows={data.highValueOrders.slice(0, 8)}
-            emptyText="Крупных заказов выше текущего порога сейчас нет."
-          />
+            <TabsContent value="graphs">
+              <GraphsTab
+                data={data.graphsData}
+                orders={data.allOrders}
+                highValueThreshold={data.adminSettings.high_value_threshold}
+              />
+            </TabsContent>
 
-          <section className="grid-2">
-            <OrderQueue
-              title="Апселл до high-value"
-              caption="Апселл"
-              description="Клиенты уже близко к порогу. Здесь менеджер может увеличить средний чек."
-              rows={data.upsellOrders.slice(0, 6)}
-              emptyText="Кандидатов на апселл сейчас нет."
-            />
-            <OrderQueue
-              title="Premium / Express"
-              caption="Premium"
-              description="Премиальный сегмент. Здесь важны скорость реакции и качество сервиса."
-              rows={data.premiumOrders.slice(0, 6)}
-              emptyText="Премиальных заказов сейчас нет."
-            />
-          </section>
+            <TabsContent value="operations">
+              <OperationsTab
+                data={data.operationsData}
+              />
+            </TabsContent>
 
-          <section className="grid-2">
-            <OrderQueue
-              title="Заказы без контакта"
-              caption="Риск"
-              description="Операционный риск: менеджер не сможет быстро связаться с клиентом."
-              rows={data.ordersWithoutContact.slice(0, 6)}
-              emptyText="Во всех заказах есть телефон или email."
-            />
-            <OrderQueue
-              title="Потерянная атрибуция"
-              caption="Маркетинг"
-              description="Сюда попадают заказы без понятного источника. Это дыра в маркетинговой аналитике."
-              rows={data.unknownSourceOrders.slice(0, 6)}
-              emptyText="Во всех заказах источник определён."
-            />
-          </section>
+            <TabsContent value="marketing">
+              <MarketingTab data={data.marketingData} />
+            </TabsContent>
+
+            <TabsContent value="finance">
+              <FinanceTab data={data.financeData} />
+            </TabsContent>
+
+            <TabsContent value="system">
+              <SystemTab
+                settings={data.adminSettings}
+                overview={data.notificationOverview}
+                notificationLogs={data.notificationLogs}
+              />
+            </TabsContent>
+          </Tabs>
         </>
       )}
     </main>

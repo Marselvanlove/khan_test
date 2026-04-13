@@ -1,6 +1,9 @@
 import type {
   RetailCrmCreateOrderPayload,
   RetailCrmCreateOrderResponse,
+  RetailCrmEditOrderResponse,
+  RetailCrmOrderReferenceBy,
+  RetailCrmOrderResponse,
   RetailCrmOrdersListResponse,
 } from "./types";
 
@@ -15,6 +18,13 @@ export interface RetailCrmListOptions {
   limit?: number;
   siteCode?: string;
 }
+
+export interface RetailCrmGetOrderOptions {
+  by?: RetailCrmOrderReferenceBy;
+  siteCode?: string;
+}
+
+export interface RetailCrmEditOrderOptions extends RetailCrmGetOrderOptions {}
 
 export class RetailCrmApiError extends Error {
   constructor(
@@ -118,6 +128,17 @@ export function createRetailCrmClient(config: RetailCrmClientConfig) {
     return payload;
   }
 
+  function applyReferenceOptions(
+    params: URLSearchParams,
+    options: RetailCrmGetOrderOptions = {},
+  ) {
+    params.set("by", options.by ?? "id");
+
+    if ((options.by === "externalId" || options.by === "number") && (options.siteCode ?? config.defaultSite)) {
+      params.set("site", options.siteCode ?? config.defaultSite ?? "");
+    }
+  }
+
   return {
     async createOrder(order: RetailCrmCreateOrderPayload): Promise<RetailCrmCreateOrderResponse> {
       const body = new URLSearchParams();
@@ -155,6 +176,48 @@ export function createRetailCrmClient(config: RetailCrmClientConfig) {
 
       return orders;
     },
+
+    async getOrder(
+      reference: string | number,
+      options: RetailCrmGetOrderOptions = {},
+    ): Promise<RetailCrmOrderResponse> {
+      const params = new URLSearchParams();
+
+      applyReferenceOptions(params, options);
+
+      const payload = await getJson<{ success: boolean; order?: RetailCrmOrderResponse }>(
+        `orders/${encodeURIComponent(String(reference))}`,
+        params,
+      );
+
+      if (!payload.order) {
+        throw new RetailCrmApiError("RetailCRM order not found", 404, payload);
+      }
+
+      return payload.order;
+    },
+
+    async editOrder(
+      reference: string | number,
+      order: Partial<RetailCrmOrderResponse>,
+      options: RetailCrmEditOrderOptions = {},
+    ): Promise<RetailCrmEditOrderResponse> {
+      const body = new URLSearchParams();
+
+      body.set("order", JSON.stringify(order));
+
+      if (options.by) {
+        body.set("by", options.by);
+      }
+
+      if ((options.by === "externalId" || options.by === "number") && (options.siteCode ?? config.defaultSite)) {
+        body.set("site", options.siteCode ?? config.defaultSite ?? "");
+      }
+
+      return postForm<RetailCrmEditOrderResponse>(
+        `orders/${encodeURIComponent(String(reference))}/edit`,
+        body,
+      );
+    },
   };
 }
-

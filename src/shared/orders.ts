@@ -1,17 +1,16 @@
 import type {
   MockOrder,
-  NotificationAlertType,
   OperationalOrderRow,
+  OrderLineItemDetail,
   OrderRecordInput,
+  PaymentStatus,
   RetailCrmCreateOrderPayload,
   RetailCrmParty,
   RetailCrmOrderItem,
   RetailCrmOrderResponse,
   SourceMetric,
   StatusSummaryItem,
-  TelegramOrderContext,
 } from "./types";
-import { formatAlertTypeList, getAlertTypeLabel } from "./admin-settings";
 
 export const HIGH_VALUE_THRESHOLD = 50_000;
 export const FREE_SHIPPING_THRESHOLD = 35_000;
@@ -145,12 +144,15 @@ const STATUS_META: Record<string, { label: string; group: string; groupLabel: st
   return: { label: "Возврат", group: "cancel", groupLabel: "Отмены" },
 };
 
+export type OrderStatusAction = "handoff" | "complete";
+
 export interface MockOrderMappingOptions {
   siteCode: string;
   orderType?: string;
   orderMethod?: string;
   status?: string;
   utmFieldCode?: string;
+  externalIdPrefix?: string;
 }
 
 export interface NormalizeOrderOptions {
@@ -165,12 +167,16 @@ function fallbackMockUtmSource(externalId: string | null | undefined): string | 
   return MOCK_ORDER_SOURCES[externalId] ?? null;
 }
 
-export function buildMockExternalId(index: number): string {
-  return `mock-${String(index + 1).padStart(3, "0")}`;
+export function buildOrderExternalId(index: number, prefix = "mock"): string {
+  return `${prefix}-${String(index + 1).padStart(3, "0")}`;
 }
 
-export function buildOfferExternalId(orderIndex: number, itemIndex: number): string {
-  return `${buildMockExternalId(orderIndex)}-item-${String(itemIndex + 1).padStart(2, "0")}`;
+export function buildMockExternalId(index: number): string {
+  return buildOrderExternalId(index, "mock");
+}
+
+export function buildOfferExternalId(orderIndex: number, itemIndex: number, prefix = "mock"): string {
+  return `${buildOrderExternalId(orderIndex, prefix)}-item-${String(itemIndex + 1).padStart(2, "0")}`;
 }
 
 export function formatRetailCrmDate(date: Date): string {
@@ -255,7 +261,7 @@ export function mapMockOrderToRetailCrmOrder(
     : "Imported from mock_orders.json";
 
   return {
-    externalId: buildMockExternalId(index),
+    externalId: buildOrderExternalId(index, options.externalIdPrefix ?? "mock"),
     site: options.siteCode,
     firstName: order.firstName,
     lastName: order.lastName,
@@ -275,7 +281,7 @@ export function mapMockOrderToRetailCrmOrder(
       quantity: item.quantity,
       initialPrice: item.initialPrice,
       offer: {
-        externalId: buildOfferExternalId(index, itemIndex),
+        externalId: buildOfferExternalId(index, itemIndex, options.externalIdPrefix ?? "mock"),
         name: item.productName,
       },
     })),
@@ -362,6 +368,18 @@ export function formatOrderDate(value: string): string {
   }).format(new Date(value));
 }
 
+export function formatOrderDateTime(value: string, timezone = "Asia/Almaty"): string {
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZone: timezone,
+  }).format(new Date(value));
+}
+
 export function formatSourceLabel(source: string | null | undefined): string {
   if (!source?.trim()) {
     return "unknown source";
@@ -377,6 +395,129 @@ export function formatSourceLabel(source: string | null | undefined): string {
   };
 
   return labels[normalized] ?? normalized;
+}
+
+const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
+  unpaid: "Не оплачено",
+  partial: "Частично оплачено",
+  paid: "Оплачено",
+  refunded: "Возврат",
+  unknown: "Нет данных",
+};
+
+const REFUND_PAYMENT_STATUSES = ["refund", "returned", "chargeback"];
+const UNPAID_PAYMENT_STATUSES = ["not-paid", "unpaid", "await", "pending", "new", "process"];
+
+function normalizePaymentStatusToken(value: unknown): string {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function isRefundPaymentStatus(value: string): boolean {
+  return REFUND_PAYMENT_STATUSES.some((token) => value.includes(token));
+}
+
+function isUnpaidPaymentStatus(value: string): boolean {
+  return UNPAID_PAYMENT_STATUSES.some((token) => value.includes(token));
+}
+
+export function formatPaymentStatusLabel(status: PaymentStatus): string {
+  return PAYMENT_STATUS_LABELS[status];
+}
+
+export function normalizeOrderPayments(
+  order: RetailCrmOrderResponse,
+  totalAmount: number,
+): {
+  paid_amount: number;
+  outstanding_amount: number;
+  payment_status: PaymentStatus;
+  is_partial_payment: boolean;
+  payment_paid_at: string | null;
+  has_payment_data: boolean;
+} {
+  const payments = Array.isArray(order.payments)
+    ? order.payments.filter((payment): payment is Record<string, unknown> => Boolean(payment))
+    : [];
+
+  if (!payments.length) {
+    return {
+      paid_amount: 0,
+      outstanding_amount: Math.max(totalAmount, 0),
+      payment_status: "unknown",
+      is_partial_payment: false,
+      payment_paid_at: null,
+      has_payment_data: false,
+    };
+  }
+
+  let capturedAmount = 0;
+  let refundedAmount = 0;
+  let latestPaidAt: string | null = null;
+  let hasPaymentData = false;
+
+  for (const payment of payments) {
+    const status = normalizePaymentStatusToken(payment.status ?? payment.paymentStatus);
+    const amount = Math.abs(
+      toNumber(
+        (payment.amount as number | string | null | undefined) ??
+          (payment.paidAmount as number | string | null | undefined) ??
+          (payment.sum as number | string | null | undefined) ??
+          0,
+      ),
+    );
+    const paidAt = payment.paidAt ? String(payment.paidAt) : null;
+
+    if (status || amount > 0 || paidAt) {
+      hasPaymentData = true;
+    }
+
+    if (paidAt) {
+      if (!latestPaidAt || Date.parse(paidAt) > Date.parse(latestPaidAt)) {
+        latestPaidAt = paidAt;
+      }
+    }
+
+    if (isRefundPaymentStatus(status)) {
+      refundedAmount += amount;
+      continue;
+    }
+
+    if (status && isUnpaidPaymentStatus(status)) {
+      continue;
+    }
+
+    if (amount > 0) {
+      capturedAmount += amount;
+    }
+  }
+
+  const paidAmount = Math.max(capturedAmount - refundedAmount, 0);
+  const outstandingAmount = Math.max(totalAmount - paidAmount, 0);
+
+  let paymentStatus: PaymentStatus = "unknown";
+
+  if (!hasPaymentData) {
+    paymentStatus = "unknown";
+  } else if (refundedAmount > 0 && paidAmount === 0) {
+    paymentStatus = "refunded";
+  } else if (paidAmount >= totalAmount && totalAmount > 0) {
+    paymentStatus = "paid";
+  } else if (paidAmount > 0 && paidAmount < totalAmount) {
+    paymentStatus = "partial";
+  } else if (paidAmount === 0) {
+    paymentStatus = "unpaid";
+  } else if (refundedAmount > 0) {
+    paymentStatus = "refunded";
+  }
+
+  return {
+    paid_amount: paidAmount,
+    outstanding_amount: outstandingAmount,
+    payment_status: paymentStatus,
+    is_partial_payment: paymentStatus === "partial",
+    payment_paid_at: latestPaidAt,
+    has_payment_data: hasPaymentData,
+  };
 }
 
 export function getStatusMeta(statusCode: string | null | undefined) {
@@ -521,7 +662,27 @@ export function extractOrderItems(order: RetailCrmOrderResponse): Array<{ name: 
     .filter((item) => item.name.trim());
 }
 
-function formatWhatsappLink(phone: string | null): string | null {
+export function extractOrderItemDetails(order: RetailCrmOrderResponse): OrderLineItemDetail[] {
+  return (order.items ?? [])
+    .map((item) => {
+      const quantity = Math.max(1, toNumber(item.quantity ?? 1));
+      const initialPrice = Math.max(0, toNumber(item.initialPrice ?? 0));
+
+      return {
+        name: item.offer?.displayName || item.offer?.name || item.productName || "Товар без названия",
+        quantity,
+        initial_price: initialPrice,
+        total_price: initialPrice * quantity,
+      };
+    })
+    .filter((item) => item.name.trim());
+}
+
+export function formatOrderItemUnitLine(item: Pick<OrderLineItemDetail, "name" | "quantity" | "initial_price">) {
+  return `«${item.name}» - х${item.quantity} ${formatCurrencyKzt(item.initial_price)}`;
+}
+
+export function buildWhatsappUrl(phone: string | null): string | null {
   if (!phone) {
     return null;
   }
@@ -532,75 +693,171 @@ function formatWhatsappLink(phone: string | null): string | null {
     return null;
   }
 
-  return `<a href="https://wa.me/${digits}">${escapeHtml(phone)}</a>`;
+  return `https://wa.me/${digits}`;
 }
 
-export function formatTelegramMessage(order: TelegramOrderContext): string {
-  const rawOrder = order.raw_payload;
-  const orderNumber = extractOrderNumber(rawOrder, order.external_id);
-  const alertTypes = order.alert_types.length ? order.alert_types : (["high-value"] as NotificationAlertType[]);
-  const alertSummary = formatAlertTypeList(alertTypes);
-  const phone = extractOrderPhone(rawOrder, order.phone);
-  const email = extractOrderEmail(rawOrder, order.email);
-  const address = extractOrderAddress(rawOrder);
-  const waLink = formatWhatsappLink(phone);
-  const items = extractOrderItems(rawOrder);
-  const statusMeta = getStatusMeta(rawOrder.status ?? null);
-  const segment = getSegmentMeta(order.total_amount);
-  const slaLabel = getSlaLabel({
-    totalAmount: order.total_amount,
-    statusCode: rawOrder.status ?? null,
-    missingContact: !phone && !email,
-  });
-  const crmLink = buildRetailCrmOrderUrl(order.retailcrm_base_url, order.retailcrm_id);
-  const lines = [
-    `<b>${escapeHtml(getAlertTypeLabel(alertTypes[0]))}</b>`,
-    `Заказ <code>${escapeHtml(orderNumber)}</code>`,
-    `<b>${escapeHtml(order.customer_name)}</b>`,
-  ];
+export function getOrderCustomerName(
+  order: RetailCrmOrderResponse,
+  fallback = "Без имени",
+): string {
+  const value = [order.firstName, order.lastName].filter(Boolean).join(" ").trim();
 
-  if (alertTypes.length > 1) {
-    lines.splice(1, 0, `Причины: ${escapeHtml(alertSummary)}`);
+  return value || fallback;
+}
+
+export function splitCustomerName(customerName: string | null | undefined) {
+  const value = customerName?.trim() ?? "";
+
+  if (!value) {
+    return {
+      firstName: "",
+      lastName: "",
+    };
   }
 
-  if (waLink) {
-    lines.push(`Телефон: ${waLink}`);
-  } else if (phone) {
-    lines.push(`Телефон: ${escapeHtml(phone)}`);
+  const [firstName, ...rest] = value.split(/\s+/);
+
+  return {
+    firstName,
+    lastName: rest.join(" "),
+  };
+}
+
+export function getKnownStatusOptions() {
+  return Object.entries(STATUS_META).map(([code, meta]) => ({
+    code,
+    label: meta.label,
+    group: meta.groupLabel,
+  }));
+}
+
+export function resolveOrderStatusTransition(
+  action: OrderStatusAction,
+  statusCode: string | null | undefined,
+) {
+  const statusMeta = getStatusMeta(statusCode);
+
+  if (action === "handoff") {
+    if (statusMeta.group === "complete") {
+      return {
+        ok: false as const,
+        error: "Заказ уже завершён.",
+      };
+    }
+
+    if (statusMeta.group === "cancel") {
+      return {
+        ok: false as const,
+        error: "Отменённый заказ нельзя передать курьеру.",
+      };
+    }
+
+    if (statusMeta.group === "delivery") {
+      return {
+        ok: true as const,
+        nextStatusCode: null,
+        changed: false,
+      };
+    }
+
+    return {
+      ok: true as const,
+      nextStatusCode: "send-to-delivery",
+      changed: true,
+    };
   }
 
-  if (email) {
-    lines.push(`Email: ${escapeHtml(email)}`);
+  if (statusMeta.group === "complete") {
+    return {
+      ok: true as const,
+      nextStatusCode: null,
+      changed: false,
+    };
   }
 
-  if (order.city || address) {
-    const location = [order.city, address].filter(Boolean).join(", ");
-    lines.push(`Адрес: ${escapeHtml(location)}`);
+  if (statusMeta.group === "cancel") {
+    return {
+      ok: false as const,
+      error: "Отменённый заказ нельзя завершить.",
+    };
   }
 
-  if (items.length) {
-    lines.push("Товары:");
-    lines.push(...items.map((item) => `• «${escapeHtml(item.name)}» ×${item.quantity}`));
-  }
+  return {
+    ok: true as const,
+    nextStatusCode: "complete",
+    changed: true,
+  };
+}
 
-  lines.push(`Сумма: <i>${escapeHtml(formatCurrencyKzt(order.total_amount))}</i>`);
-  lines.push(`Сегмент: ${escapeHtml(segment.label)}`);
-  lines.push(`Статус: ${escapeHtml(statusMeta.label)}`);
-  lines.push(`SLA: ${escapeHtml(slaLabel)}`);
+export function buildOperationalOrderRowFromRecord(
+  row: Record<string, unknown>,
+  options: {
+    retailCrmBaseUrl: string | null;
+    managerUrl?: string | null;
+    logisticsUrl?: string | null;
+  },
+): OperationalOrderRow {
+  const rawPayload = row.raw_payload as RetailCrmOrderResponse;
+  const retailcrmId = Number(row.retailcrm_id);
+  const externalId = row.external_id ? String(row.external_id) : null;
+  const phone = extractOrderPhone(rawPayload, row.phone ? String(row.phone) : null);
+  const email = extractOrderEmail(rawPayload, row.email ? String(row.email) : null);
+  const address = extractOrderAddress(rawPayload);
+  const totalAmount = Number(row.total_amount ?? 0);
+  const statusCode = row.status ? String(row.status) : null;
+  const statusMeta = getStatusMeta(statusCode);
+  const segment = getSegmentMeta(totalAmount);
+  const source = row.utm_source ? String(row.utm_source) : null;
+  const unknownSource = !source?.trim();
+  const missingContact = !phone && !email;
+  const paymentMeta = normalizeOrderPayments(rawPayload, totalAmount);
 
-  if (order.utm_source) {
-    lines.push(`Источник: ${escapeHtml(formatSourceLabel(order.utm_source))}`);
-  } else {
-    lines.push("Источник: unknown source");
-  }
-
-  lines.push(`Дата: ${escapeHtml(formatOrderDate(order.created_at))}`);
-
-  if (crmLink) {
-    lines.push(`<a href="${escapeHtml(crmLink)}">Открыть заказ в RetailCRM</a>`);
-  }
-
-  return lines.join("\n");
+  return {
+    retailcrm_id: retailcrmId,
+    crm_number: extractOrderNumber(rawPayload, externalId),
+    external_id: externalId,
+    customer_name: String(row.customer_name ?? getOrderCustomerName(rawPayload)),
+    first_name: typeof rawPayload.firstName === "string" ? rawPayload.firstName : null,
+    last_name: typeof rawPayload.lastName === "string" ? rawPayload.lastName : null,
+    phone,
+    whatsapp_url: buildWhatsappUrl(phone),
+    email,
+    city: row.city ? String(row.city) : rawPayload.delivery?.address?.city ?? null,
+    address,
+    customer_comment:
+      typeof rawPayload.customerComment === "string" ? rawPayload.customerComment : null,
+    total_amount: totalAmount,
+    created_at: String(row.created_at),
+    utm_source: source,
+    source_label: formatSourceLabel(source),
+    status_code: statusCode,
+    status_label: statusMeta.label,
+    status_group: statusMeta.group,
+    status_group_label: statusMeta.groupLabel,
+    segment_code: segment.code,
+    segment_label: segment.label,
+    sla_label: getSlaLabel({
+      totalAmount,
+      statusCode,
+      missingContact,
+    }),
+    retailcrm_url: buildRetailCrmOrderUrl(options.retailCrmBaseUrl, retailcrmId),
+    manager_url: options.managerUrl ?? null,
+    logistics_url: options.logisticsUrl ?? null,
+    items: extractOrderItemDetails(rawPayload),
+    missing_contact: missingContact,
+    unknown_source: unknownSource,
+    paid_amount: paymentMeta.paid_amount,
+    outstanding_amount: paymentMeta.outstanding_amount,
+    payment_status: paymentMeta.payment_status,
+    is_partial_payment: paymentMeta.is_partial_payment,
+    is_cancelled_after_payment:
+      statusMeta.group === "cancel" && paymentMeta.paid_amount > 0,
+    payment_paid_at: paymentMeta.payment_paid_at,
+    has_payment_data: paymentMeta.has_payment_data,
+    telegram_notified_at: row.telegram_notified_at ? String(row.telegram_notified_at) : null,
+    alert_reasons: [],
+  };
 }
 
 export function summarizeMetrics(

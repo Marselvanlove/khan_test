@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-const DASHBOARD_HEADING = "Операционный дашборд заказов для Tomyris";
+const DASHBOARD_HEADING = "Дашборд заказов Tomyris";
 const SETUP_REQUIRED_TEXT = "Заполни SUPABASE_URL и SUPABASE_SECRET_KEY, чтобы увидеть данные.";
 
 function collectRuntimeErrors(page: Page) {
@@ -68,7 +68,35 @@ test("dashboard smoke: extension-like body attrs do not trigger hydration mismat
     Array.from(document.body.attributes).map((attribute) => attribute.name),
   );
 
-  expect(bodyAttributes).toContain("__processed_ca649cf1-0890-4ec0-9d17-6a1c57145e03__");
-  expect(bodyAttributes).toContain("bis_register");
+  expect(bodyAttributes).not.toContain("__processed_ca649cf1-0890-4ec0-9d17-6a1c57145e03__");
+  expect(bodyAttributes).not.toContain("bis_register");
+  expect(runtimeErrors, runtimeErrors.join("\n")).toEqual([]);
+});
+
+test("dashboard smoke: nested extension attrs do not trigger hydration mismatch", async ({
+  page,
+  context,
+}) => {
+  const runtimeErrors = collectRuntimeErrors(page);
+
+  await context.addInitScript(() => {
+    const markElements = () => {
+      for (const element of Array.from(document.querySelectorAll("div"))) {
+        element.setAttribute("bis_skin_checked", "1");
+      }
+    };
+
+    new MutationObserver(markElements).observe(document, {
+      childList: true,
+      subtree: true,
+    });
+    markElements();
+  });
+
+  await assertDashboardShell(page);
+
+  const overlayText = await page.locator("[data-nextjs-dialog]").allInnerTexts();
+
+  expect(overlayText.join("\n")).not.toContain("A tree hydrated but some attributes");
   expect(runtimeErrors, runtimeErrors.join("\n")).toEqual([]);
 });

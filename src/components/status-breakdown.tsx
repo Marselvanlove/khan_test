@@ -1,36 +1,53 @@
-import type { StatusSummaryItem } from "@/shared/types";
+"use client";
+
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
+import type { OperationsStatusFlowItem } from "@/shared/types";
 
 interface StatusBreakdownProps {
-  rows: StatusSummaryItem[];
+  rows: OperationsStatusFlowItem[];
+  activeGroup?: string | null;
+  onSelect?: (group: string) => void;
 }
 
-export function StatusBreakdown({ rows }: StatusBreakdownProps) {
+export function StatusBreakdown({ rows, activeGroup = null, onSelect }: StatusBreakdownProps) {
   return (
-    <section className="panel">
-      <div className="panel-heading">
-        <div>
-          <p className="panel-eyebrow">Status Flow</p>
-          <h2>Срез по статусным группам</h2>
-        </div>
-        <p className="panel-caption">
-          Помогает увидеть, где заказы застревают: новые, согласование, доставка, отмены.
-        </p>
-      </div>
+    <Card className="border-border/70 bg-card/90 shadow-sm">
+      <CardHeader>
+        <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-primary">Status Flow</p>
+        <CardTitle>Срез по статусным группам</CardTitle>
+        <CardDescription>
+          Показывает, где поток застревает. Клик по карточке фильтрует рабочие очереди ниже.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {rows.length ? (
+          rows.map((row) => {
+            const isActive = activeGroup === row.group;
 
-      {rows.length ? (
-        <div className="status-grid">
-          {rows.map((row) => (
-            <article className="status-card" key={row.group}>
-              <p className="status-count">{row.count}</p>
-              <p className="status-label">{row.label}</p>
-            </article>
-          ))}
-        </div>
-      ) : (
-        <div className="empty-panel">
-          <p>Статусы пока не загружены.</p>
-        </div>
-      )}
-    </section>
+            return (
+              <button
+                key={row.group}
+                type="button"
+                onClick={() => onSelect?.(row.group)}
+                className={cn(
+                  "rounded-xl border border-border/70 bg-background/70 p-4 text-left transition-colors",
+                  onSelect && "hover:border-primary/40",
+                  isActive && "border-primary/50 bg-primary/5",
+                )}
+              >
+                <p className="text-3xl font-semibold leading-none">{row.count}</p>
+                <p className="mt-2 text-sm text-foreground">{row.label}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{row.share.toFixed(1)}% потока</p>
+              </button>
+            );
+          })
+        ) : (
+          <div className="rounded-xl border border-dashed border-border/80 bg-background/70 px-4 py-6 text-sm text-muted-foreground">
+            Статусы пока не загружены.
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

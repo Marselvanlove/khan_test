@@ -8,13 +8,22 @@ import {
   isNotificationWindowOpen,
   normalizeAdminSettings,
 } from "../../../src/shared/admin-settings.ts";
-import {
-  extractOrderNumber,
-  formatTelegramMessage,
-  getStatusMeta,
-  normalizeRetailCrmOrder,
-} from "../../../src/shared/orders.ts";
+import { buildSignedManagerLink } from "../../../src/shared/order-links.ts";
+import { normalizeRetailCrmOrder, getStatusMeta } from "../../../src/shared/orders.ts";
 import { createRetailCrmClient } from "../../../src/shared/retailcrm.ts";
+import {
+  attachTelegramMessageId,
+  createTelegramMessageState,
+  deleteTelegramMessageState,
+} from "../../../src/shared/telegram-message-state.ts";
+import {
+  TelegramApiError,
+  sendTelegramTextMessage,
+} from "../../../src/shared/telegram-api.ts";
+import {
+  buildTelegramNotificationKeyboard,
+  formatTelegramOrderMessage,
+} from "../../../src/shared/telegram.ts";
 import type {
   AdminSettings,
   NotificationAlertType,
@@ -138,32 +147,49 @@ async function sendTelegramMessageWithRetry(
     total_amount: number;
     created_at: string;
     utm_source: string | null;
-    retailcrm_base_url?: string | null;
     raw_payload: OrderRecordInput["raw_payload"];
   },
+  timezone: string,
 ) {
-  const orderNumber = extractOrderNumber(payload.raw_payload, payload.external_id);
-  const messageText = formatTelegramMessage(payload);
+  const linkSigningSecret = Deno.env.get("LINK_SIGNING_SECRET")?.trim() ?? null;
+  const appBaseUrl = Deno.env.get("APP_BASE_URL")?.trim() ?? null;
+  const messageStateId = crypto.randomUUID();
+  const messageState = await createTelegramMessageState(supabase as never, {
+    id: messageStateId,
+    order_retailcrm_id: payload.retailcrm_id,
+    chat_id: chatId,
+    alert_types: payload.alert_types,
+  });
+  const openUrl = linkSigningSecret
+    ? (
+        await buildSignedManagerLink({
+          retailcrmId: payload.retailcrm_id,
+          secret: linkSigningSecret,
+          baseUrl: appBaseUrl,
+        })
+      ).url
+    : null;
+  const messageText = formatTelegramOrderMessage(payload, { timezone });
+  const keyboard = buildTelegramNotificationKeyboard({
+    openUrl,
+    stateId: messageState.id,
+    status: "sent",
+  });
 
   for (let attempt = 1; attempt <= TELEGRAM_MAX_ATTEMPTS; attempt += 1) {
-    const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        chat_id: chatId,
+    try {
+      const message = await sendTelegramTextMessage({
+        botToken,
+        chatId,
         text: messageText,
-        parse_mode: "HTML",
-        disable_web_page_preview: true,
-      }),
-    });
+        replyMarkup: keyboard,
+      });
 
-    if (response.ok) {
+      await attachTelegramMessageId(supabase as never, messageState.id, Number(message.message_id));
       await recordNotificationLog(supabase, {
         event_types: payload.alert_types,
         order_retailcrm_id: payload.retailcrm_id,
-        order_number: orderNumber,
+        order_number: String(payload.raw_payload.number ?? payload.external_id ?? payload.retailcrm_id),
         channel: "telegram",
         recipient: chatId,
         status: "sent",
@@ -173,49 +199,49 @@ async function sendTelegramMessageWithRetry(
         payload_preview: messageText,
         delivered_at: new Date().toISOString(),
       });
+
       return;
-    }
+    } catch (error) {
+      if (error instanceof TelegramApiError && error.status === 429 && attempt < TELEGRAM_MAX_ATTEMPTS) {
+        await recordNotificationLog(supabase, {
+          event_types: payload.alert_types,
+          order_retailcrm_id: payload.retailcrm_id,
+          order_number: String(payload.raw_payload.number ?? payload.external_id ?? payload.retailcrm_id),
+          channel: "telegram",
+          recipient: chatId,
+          status: "rate_limited",
+          attempt,
+          rate_limited: true,
+          error_message: error.payload?.description ?? "Telegram rate limit",
+          payload_preview: messageText,
+          delivered_at: null,
+        });
+        await sleep(((Number(error.payload?.parameters?.retry_after ?? 1) || 1) + 1) * 1000);
+        continue;
+      }
 
-    const errorPayload = await response.json().catch(() => null);
-    const retryAfter = Number(errorPayload?.parameters?.retry_after ?? 1);
-
-    if (response.status === 429 && attempt < TELEGRAM_MAX_ATTEMPTS) {
+      await deleteTelegramMessageState(supabase as never, messageState.id).catch(() => null);
       await recordNotificationLog(supabase, {
         event_types: payload.alert_types,
         order_retailcrm_id: payload.retailcrm_id,
-        order_number: orderNumber,
+        order_number: String(payload.raw_payload.number ?? payload.external_id ?? payload.retailcrm_id),
         channel: "telegram",
         recipient: chatId,
-        status: "rate_limited",
+        status: "failed",
         attempt,
-        rate_limited: true,
-        error_message: errorPayload?.description ?? "Telegram rate limit",
+        rate_limited: error instanceof TelegramApiError && error.status === 429,
+        error_message:
+          error instanceof TelegramApiError
+            ? error.payload?.description ?? `HTTP ${error.status}`
+            : error instanceof Error
+              ? error.message
+              : "Unknown Telegram error",
         payload_preview: messageText,
         delivered_at: null,
       });
-      await sleep((retryAfter + 1) * 1000);
-      continue;
+
+      throw error;
     }
-
-    await recordNotificationLog(supabase, {
-      event_types: payload.alert_types,
-      order_retailcrm_id: payload.retailcrm_id,
-      order_number: orderNumber,
-      channel: "telegram",
-      recipient: chatId,
-      status: "failed",
-      attempt,
-      rate_limited: response.status === 429,
-      error_message: errorPayload?.description ?? `HTTP ${response.status}`,
-      payload_preview: messageText,
-      delivered_at: null,
-    });
-
-    throw new Error(
-      `Telegram sendMessage failed with ${response.status}${
-        errorPayload?.description ? `: ${errorPayload.description}` : ""
-      }`,
-    );
   }
 }
 
@@ -335,20 +361,25 @@ async function sendTelegramNotifications() {
       continue;
     }
 
-    await sendTelegramMessageWithRetry(supabase, botToken, chatId, {
-      alert_types: nextAlertTypes,
-      retailcrm_id: Number(row.retailcrm_id),
-      external_id: row.external_id ? String(row.external_id) : null,
-      customer_name: String(row.customer_name),
-      phone: row.phone ? String(row.phone) : null,
-      email: row.email ? String(row.email) : null,
-      city: row.city ? String(row.city) : null,
-      total_amount: Number(row.total_amount),
-      created_at: String(row.created_at),
-      utm_source: row.utm_source ? String(row.utm_source) : null,
-      retailcrm_base_url: Deno.env.get("RETAILCRM_BASE_URL")?.trim() ?? null,
-      raw_payload: row.raw_payload as OrderRecordInput["raw_payload"],
-    });
+    await sendTelegramMessageWithRetry(
+      supabase,
+      botToken,
+      chatId,
+      {
+        alert_types: nextAlertTypes,
+        retailcrm_id: Number(row.retailcrm_id),
+        external_id: row.external_id ? String(row.external_id) : null,
+        customer_name: String(row.customer_name),
+        phone: row.phone ? String(row.phone) : null,
+        email: row.email ? String(row.email) : null,
+        city: row.city ? String(row.city) : null,
+        total_amount: Number(row.total_amount),
+        created_at: String(row.created_at),
+        utm_source: row.utm_source ? String(row.utm_source) : null,
+        raw_payload: row.raw_payload as OrderRecordInput["raw_payload"],
+      },
+      settings.timezone,
+    );
 
     const { error: updateError } = await supabase
       .from("orders")
@@ -393,7 +424,9 @@ Deno.serve(async (request) => {
     });
 
     const records = orders.map((order) =>
-      normalizeRetailCrmOrder(order, { utmFieldCode: Deno.env.get("RETAILCRM_UTM_FIELD_CODE")?.trim() }),
+      normalizeRetailCrmOrder(order, {
+        utmFieldCode: Deno.env.get("RETAILCRM_UTM_FIELD_CODE")?.trim(),
+      }),
     );
 
     await upsertOrders(records);

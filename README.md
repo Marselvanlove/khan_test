@@ -6,6 +6,7 @@
 
 - `src/app` — публичный дашборд на Next.js App Router.
 - `scripts/import-mock-orders.ts` — первичный импорт `mock_orders.json` в RetailCRM.
+- `scripts/demo-reset.ts` — очистка операционных таблиц Supabase перед demo-прогоном.
 - `scripts/sync-retailcrm.ts` — ручной запуск синка RetailCRM -> Supabase + Telegram.
 - `supabase/migrations` — схема таблицы `orders` и view `daily_order_metrics`.
 - `supabase/functions/sync-retailcrm` — Edge Function для автосинка и уведомлений.
@@ -51,8 +52,11 @@ cp .env.example .env.local
 - `SUPABASE_URL`
 - `SUPABASE_SECRET_KEY`
 - `SUPABASE_PUBLISHABLE_KEY` — опционально, если позже появится публичный клиент
+- `APP_BASE_URL` — абсолютный URL Next.js-приложения для кнопки `Открыть` и share-ссылок
+- `LINK_SIGNING_SECRET` — подпись manager/share ссылок
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID` — для текущего решения `-1003953849238`
+- `TELEGRAM_WEBHOOK_SECRET` — секрет заголовка `X-Telegram-Bot-Api-Secret-Token`
 - `SYNC_ENDPOINT_SECRET`
 
 ## Локальный запуск
@@ -72,6 +76,12 @@ npm run dev
 
 ```bash
 npm run import:retailcrm -- --dry-run
+```
+
+Точечный demo-импорт одной заявки:
+
+```bash
+npm run import:retailcrm -- --index 0 --limit 1 --external-id-prefix "demo-$(date +%s)"
 ```
 
 Боевой импорт:
@@ -99,6 +109,12 @@ npm run import:retailcrm
 
 ```bash
 npm run sync:retailcrm
+```
+
+Точечный sync одного заказа по `external_id`:
+
+```bash
+npm run sync:retailcrm -- --external-id demo-1710000000-001
 ```
 
 Скрипт:
@@ -143,6 +159,45 @@ curl -X POST "https://<project-ref>.functions.supabase.co/sync-retailcrm" \
 - `supabase/cron.sql.example`
 
 Он настраивает запуск Edge Function каждую минуту через `pg_cron + pg_net`.
+
+## Demo-flow на 1 заявку
+
+1. Очистить только операционные таблицы в Supabase:
+
+```bash
+npm run demo:reset
+```
+
+2. Создать 1 новый заказ в RetailCRM с уникальным demo-префиксом:
+
+```bash
+npm run import:retailcrm -- --index 0 --limit 1 --external-id-prefix "demo-$(date +%s)"
+```
+
+3. Синкнуть только этот заказ в Supabase и Telegram:
+
+```bash
+npm run sync:retailcrm -- --external-id demo-1710000000-001
+```
+
+## Telegram inline workflow
+
+- уведомление содержит inline-кнопки `Открыть` и `Выполнено`
+- `Открыть` ведёт на signed manager page `/orders/[retailcrmId]?sig=...`
+- `Передать курьеру` на manager page копирует signed logistics page `/orders/[retailcrmId]/logistics?token=...` и переводит заказ в RetailCRM статус `send-to-delivery`, если он ещё не в группе доставки
+- `Сделка завершена` на manager page переводит заказ в RetailCRM статус `complete`
+- `Выполнено` требует подтверждение и затем переводит заказ в RetailCRM статус `complete`
+
+Webhook для callback-кнопок:
+
+```bash
+curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://your-app.example.com/api/telegram/webhook",
+    "secret_token": "'"$TELEGRAM_WEBHOOK_SECRET"'"
+  }'
+```
 
 ## Дашборд и деплой на Vercel
 

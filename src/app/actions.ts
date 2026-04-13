@@ -2,7 +2,11 @@
 
 import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
-import { DEFAULT_ADMIN_SETTINGS, normalizeAdminSettings } from "@/shared/admin-settings";
+import {
+  DEFAULT_ADMIN_SETTINGS,
+  isMissingSupabaseTableError,
+  normalizeAdminSettings,
+} from "@/shared/admin-settings";
 
 function isChecked(formData: FormData, key: string): boolean {
   return formData.get(key) === "on";
@@ -56,6 +60,12 @@ export async function updateAdminSettings(formData: FormData) {
   });
 
   if (error) {
+    if (isMissingSupabaseTableError(error)) {
+      throw new Error(
+        "Таблица admin_settings ещё не создана. Выполни миграцию supabase/migrations/20260413213000_admin_settings_and_notification_rules.sql.",
+      );
+    }
+
     throw new Error(error.message);
   }
 

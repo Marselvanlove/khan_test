@@ -10,11 +10,16 @@ import {
 import {
   buildMockExternalId,
   extractOrderAddress,
-  formatTelegramMessage,
   isHighValueOrder,
   mapMockOrderToRetailCrmOrder,
+  normalizeOrderPayments,
   normalizeRetailCrmOrder,
+  resolveOrderStatusTransition,
 } from "../src/shared/orders";
+import {
+  buildTelegramNotificationKeyboard,
+  formatTelegramOrderMessage,
+} from "../src/shared/telegram";
 import type { MockOrder, RetailCrmOrderResponse } from "../src/shared/types";
 
 async function readMockOrders() {
@@ -80,7 +85,52 @@ test("normalizeRetailCrmOrder calculates totals and extracts utm", () => {
   assert.equal(isHighValueOrder(normalized.total_amount), true);
 });
 
-test("formatTelegramMessage includes contact, address and items", () => {
+test("normalizeOrderPayments classifies partial and refunded flows", () => {
+  const partialPaymentOrder: RetailCrmOrderResponse = {
+    id: 201,
+    totalSumm: 60000,
+    payments: [
+      {
+        id: 1,
+        status: "paid",
+        amount: 25000,
+        paidAt: "2026-04-13T10:00:00.000Z",
+      },
+    ],
+  };
+  const refundedOrder: RetailCrmOrderResponse = {
+    id: 202,
+    totalSumm: 60000,
+    payments: [
+      {
+        id: 1,
+        status: "paid",
+        amount: 60000,
+        paidAt: "2026-04-13T10:00:00.000Z",
+      },
+      {
+        id: 2,
+        status: "refund",
+        amount: 60000,
+      },
+    ],
+  };
+
+  const partial = normalizeOrderPayments(partialPaymentOrder, 60000);
+  const refunded = normalizeOrderPayments(refundedOrder, 60000);
+
+  assert.equal(partial.payment_status, "partial");
+  assert.equal(partial.paid_amount, 25000);
+  assert.equal(partial.outstanding_amount, 35000);
+  assert.equal(partial.is_partial_payment, true);
+  assert.equal(partial.has_payment_data, true);
+
+  assert.equal(refunded.payment_status, "refunded");
+  assert.equal(refunded.paid_amount, 0);
+  assert.equal(refunded.outstanding_amount, 60000);
+});
+
+test("formatTelegramOrderMessage includes compact fields and quoted items", () => {
   const rawOrder: RetailCrmOrderResponse = {
     id: 1,
     number: "65A",
@@ -104,7 +154,7 @@ test("formatTelegramMessage includes contact, address and items", () => {
       },
     ],
   };
-  const text = formatTelegramMessage({
+  const text = formatTelegramOrderMessage({
     alert_types: ["high-value", "missing-contact"],
     retailcrm_id: 1,
     external_id: "mock-050",
@@ -118,12 +168,25 @@ test("formatTelegramMessage includes contact, address and items", () => {
     raw_payload: rawOrder,
   });
 
+  assert.match(text, /Заказ <code>65A<\/code>/);
   assert.match(text, /<b>Толкын Жумагулова<\/b>/);
-  assert.match(text, /Причины: Крупный заказ, Нет контакта у клиента/);
   assert.match(text, /wa\.me\/77001234567/);
-  assert.match(text, /«Утягивающий комбидресс Nova Slim» ×2/);
+  assert.match(text, /<blockquote>«Утягивающий комбидресс Nova Slim» - х2 42/);
   assert.match(text, /<i>/);
+  assert.match(text, /Дата: /);
   assert.equal(extractOrderAddress(rawOrder), "пр. Абая 10, кв 5");
+});
+
+test("buildTelegramNotificationKeyboard omits localhost open button", () => {
+  const keyboard = buildTelegramNotificationKeyboard({
+    openUrl: "http://localhost:3000/orders/112?sig=test",
+    stateId: "state-1",
+    status: "sent",
+  });
+
+  assert.deepEqual(keyboard, {
+    inline_keyboard: [[{ text: "Выполнено", callback_data: "done:init:state-1" }]],
+  });
 });
 
 test("notification settings normalize schedule and timezone defaults", () => {
@@ -137,6 +200,33 @@ test("notification settings normalize schedule and timezone defaults", () => {
   assert.equal(settings.workday_end_hour, 21);
   assert.equal(settings.timezone, "Asia/Almaty");
   assert.equal(formatWorkingWindow(settings), "20:00-21:00 (Asia/Almaty)");
+});
+
+test("resolveOrderStatusTransition maps handoff and completion actions", () => {
+  assert.deepEqual(resolveOrderStatusTransition("handoff", "assembling"), {
+    ok: true,
+    nextStatusCode: "send-to-delivery",
+    changed: true,
+  });
+  assert.deepEqual(resolveOrderStatusTransition("handoff", "delivering"), {
+    ok: true,
+    nextStatusCode: null,
+    changed: false,
+  });
+  assert.deepEqual(resolveOrderStatusTransition("complete", "delivering"), {
+    ok: true,
+    nextStatusCode: "complete",
+    changed: true,
+  });
+  assert.deepEqual(resolveOrderStatusTransition("complete", "complete"), {
+    ok: true,
+    nextStatusCode: null,
+    changed: false,
+  });
+  assert.deepEqual(resolveOrderStatusTransition("handoff", "cancel-other"), {
+    ok: false,
+    error: "Отменённый заказ нельзя передать курьеру.",
+  });
 });
 
 test("getAlertTypesForOrder respects enabled rules", () => {
