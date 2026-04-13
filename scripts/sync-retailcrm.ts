@@ -8,6 +8,9 @@ import {
 import { createRetailCrmClient } from "../src/shared/retailcrm";
 import type { OrderRecordInput } from "../src/shared/types";
 
+const TELEGRAM_DELAY_MS = 450;
+const TELEGRAM_MAX_ATTEMPTS = 5;
+
 function readRequiredEnv(name: string): string {
   const value = process.env[name];
 
@@ -39,6 +42,55 @@ function chunk<T>(items: T[], size: number): T[][] {
   }
 
   return result;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function sendTelegramMessageWithRetry(
+  botToken: string,
+  chatId: string,
+  payload: {
+    retailcrm_id: number;
+    external_id: string | null;
+    customer_name: string;
+    city: string | null;
+    total_amount: number;
+    created_at: string;
+    utm_source: string | null;
+  },
+) {
+  for (let attempt = 1; attempt <= TELEGRAM_MAX_ATTEMPTS; attempt += 1) {
+    const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: formatTelegramMessage(payload),
+      }),
+    });
+
+    if (response.ok) {
+      return;
+    }
+
+    const errorPayload = await response.json().catch(() => null);
+    const retryAfter = Number(errorPayload?.parameters?.retry_after ?? 1);
+
+    if (response.status === 429 && attempt < TELEGRAM_MAX_ATTEMPTS) {
+      await sleep((retryAfter + 1) * 1000);
+      continue;
+    }
+
+    throw new Error(
+      `Telegram sendMessage failed with ${response.status}${
+        errorPayload?.description ? `: ${errorPayload.description}` : ""
+      }`,
+    );
+  }
 }
 
 async function upsertOrders(records: OrderRecordInput[]) {
@@ -77,28 +129,15 @@ async function sendTelegramNotifications() {
   }
 
   for (const row of data ?? []) {
-    const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: formatTelegramMessage({
-          retailcrm_id: Number(row.retailcrm_id),
-          external_id: row.external_id ? String(row.external_id) : null,
-          customer_name: String(row.customer_name),
-          city: row.city ? String(row.city) : null,
-          total_amount: Number(row.total_amount),
-          created_at: String(row.created_at),
-          utm_source: row.utm_source ? String(row.utm_source) : null,
-        }),
-      }),
+    await sendTelegramMessageWithRetry(botToken, chatId, {
+      retailcrm_id: Number(row.retailcrm_id),
+      external_id: row.external_id ? String(row.external_id) : null,
+      customer_name: String(row.customer_name),
+      city: row.city ? String(row.city) : null,
+      total_amount: Number(row.total_amount),
+      created_at: String(row.created_at),
+      utm_source: row.utm_source ? String(row.utm_source) : null,
     });
-
-    if (!response.ok) {
-      throw new Error(`Telegram sendMessage failed with ${response.status}`);
-    }
 
     const { error: updateError } = await supabase
       .from("orders")
@@ -108,6 +147,8 @@ async function sendTelegramNotifications() {
     if (updateError) {
       throw updateError;
     }
+
+    await sleep(TELEGRAM_DELAY_MS);
   }
 
   console.log(`Telegram notifications sent: ${(data ?? []).length}`);
