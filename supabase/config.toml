@@ -1,0 +1,5 @@
+project_id = "gbc-analytics-dashboard"
+
+[functions.sync-retailcrm]
+verify_jwt = false
+

@@ -1,0 +1,25 @@
+-- Requires pg_cron, pg_net and vault extensions enabled in your Supabase project.
+-- 1. Save the edge function secret in Vault:
+-- select vault.create_secret('replace-with-sync-secret', 'sync_endpoint_secret');
+--
+-- 2. Schedule the function every minute:
+-- select cron.schedule(
+--   'retailcrm-sync-every-minute',
+--   '* * * * *',
+--   $$
+--   select
+--     net.http_post(
+--       url := 'https://<project-ref>.functions.supabase.co/sync-retailcrm',
+--       headers := jsonb_build_object(
+--         'Content-Type', 'application/json',
+--         'x-sync-secret', (
+--           select decrypted_secret
+--           from vault.decrypted_secrets
+--           where name = 'sync_endpoint_secret'
+--         )
+--       ),
+--       body := '{"source":"pg_cron"}'::jsonb
+--     );
+--   $$
+-- );
+
