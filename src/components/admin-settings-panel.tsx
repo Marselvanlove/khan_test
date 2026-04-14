@@ -17,6 +17,7 @@ import { toast } from "sonner";
 interface AdminSettingsPanelProps {
   settings: AdminSettings;
   overview: NotificationOverview;
+  editable?: boolean;
 }
 
 const HOURS = Array.from({ length: 25 }, (_, index) => index);
@@ -31,12 +32,22 @@ function boolToFormData(formData: FormData, key: string, value: boolean) {
   }
 }
 
-export function AdminSettingsPanel({ settings, overview }: AdminSettingsPanelProps) {
+export function AdminSettingsPanel({
+  settings,
+  overview,
+  editable = false,
+}: AdminSettingsPanelProps) {
   const [state, setState] = useState(settings);
   const [pending, setPending] = useState(false);
   const activeLabels = overview.activeAlerts.map((type) => getAlertTypeLabel(type));
+  const controlsDisabled = pending || !editable;
 
   async function handleSubmit() {
+    if (!editable) {
+      toast.error("Публичный дашборд работает в read-only режиме.");
+      return;
+    }
+
     const formData = new FormData();
 
     boolToFormData(formData, "notifications_enabled", state.notifications_enabled);
@@ -75,8 +86,9 @@ export function AdminSettingsPanel({ settings, overview }: AdminSettingsPanelPro
             </p>
             <CardTitle className="text-2xl">Настройки уведомлений</CardTitle>
             <CardDescription>
-              Управление правилами отправки: порог суммы, рабочее окно, часовой пояс и
-              дополнительные операционные сигналы.
+              {editable
+                ? "Управление правилами отправки: порог суммы, рабочее окно, часовой пояс и дополнительные операционные сигналы."
+                : "Публичная версия показывает текущую конфигурацию. Изменение правил отключено до приватного режима."}
             </CardDescription>
           </div>
           <Settings2Icon className="size-5 text-primary" />
@@ -98,7 +110,7 @@ export function AdminSettingsPanel({ settings, overview }: AdminSettingsPanelPro
                 onCheckedChange={(checked) =>
                   setState((prev) => ({ ...prev, notifications_enabled: checked }))
                 }
-                disabled={pending}
+                disabled={controlsDisabled}
               />
             </div>
           </div>
@@ -122,7 +134,7 @@ export function AdminSettingsPanel({ settings, overview }: AdminSettingsPanelPro
                   onCheckedChange={(checked) =>
                     setState((prev) => ({ ...prev, high_value_enabled: checked }))
                   }
-                  disabled={pending}
+                  disabled={controlsDisabled}
                 />
               </div>
 
@@ -139,7 +151,7 @@ export function AdminSettingsPanel({ settings, overview }: AdminSettingsPanelPro
                       high_value_threshold: Number(event.target.value || 0),
                     }))
                   }
-                  disabled={pending}
+                  disabled={controlsDisabled}
                 />
               </label>
 
@@ -158,7 +170,7 @@ export function AdminSettingsPanel({ settings, overview }: AdminSettingsPanelPro
                     onCheckedChange={(checked) =>
                       setState((prev) => ({ ...prev, [key]: checked }))
                     }
-                    disabled={pending}
+                    disabled={controlsDisabled}
                   />
                 </div>
               ))}
@@ -201,7 +213,7 @@ export function AdminSettingsPanel({ settings, overview }: AdminSettingsPanelPro
                 onCheckedChange={(checked) =>
                   setState((prev) => ({ ...prev, working_hours_enabled: checked }))
                 }
-                disabled={pending}
+                disabled={controlsDisabled}
               />
             </div>
 
@@ -213,7 +225,7 @@ export function AdminSettingsPanel({ settings, overview }: AdminSettingsPanelPro
                   onValueChange={(value) =>
                     setState((prev) => ({ ...prev, workday_start_hour: Number(value) }))
                   }
-                  disabled={pending}
+                  disabled={controlsDisabled}
                 >
                   <SelectTrigger>
                     <SelectValue />
@@ -235,7 +247,7 @@ export function AdminSettingsPanel({ settings, overview }: AdminSettingsPanelPro
                   onValueChange={(value) =>
                     setState((prev) => ({ ...prev, workday_end_hour: Number(value) }))
                   }
-                  disabled={pending}
+                  disabled={controlsDisabled}
                 >
                   <SelectTrigger>
                     <SelectValue />
@@ -257,7 +269,7 @@ export function AdminSettingsPanel({ settings, overview }: AdminSettingsPanelPro
                   onValueChange={(value) =>
                     setState((prev) => ({ ...prev, timezone: value }))
                   }
-                  disabled={pending}
+                  disabled={controlsDisabled}
                 >
                   <SelectTrigger>
                     <SelectValue />
@@ -274,11 +286,13 @@ export function AdminSettingsPanel({ settings, overview }: AdminSettingsPanelPro
             </div>
           </div>
 
-          <div className="flex justify-end">
-            <Button onClick={handleSubmit} disabled={pending}>
-              {pending ? "Сохраняю..." : "Сохранить настройки"}
-            </Button>
-          </div>
+          {editable ? (
+            <div className="flex justify-end">
+              <Button onClick={handleSubmit} disabled={pending}>
+                {pending ? "Сохраняю..." : "Сохранить настройки"}
+              </Button>
+            </div>
+          ) : null}
         </div>
 
         <div className="grid gap-4">

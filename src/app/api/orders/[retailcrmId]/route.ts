@@ -1,31 +1,17 @@
 import { NextResponse } from "next/server";
-import { buildSignedLogisticsLink, buildSignedManagerLink } from "@/shared/order-links";
 import {
-  buildOperationalOrderRowFromRecord,
-  resolveOrderStatusTransition,
-  splitCustomerName,
-} from "@/shared/orders";
-import { createRetailCrmClient } from "@/shared/retailcrm";
-import { resolveAppBaseUrl, updateOrderSnapshotFromRetailCrm } from "@/lib/orders-server";
-import type { RetailCrmOrderResponse } from "@/shared/types";
+  OrderWriteAccessError,
+  assertOrderWriteAccess,
+  normalizeOrderWriteAccessPayload,
+} from "@/lib/order-write-access";
+import { resolveOrderStatusTransition, splitCustomerName } from "@/shared/orders";
+import {
+  buildOperationalOrderResponse,
+  createRetailCrmRuntimeClient,
+} from "@/lib/order-status-server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-function createRetailCrmRuntimeClient() {
-  const baseUrl = process.env.RETAILCRM_BASE_URL?.trim();
-  const apiKey = process.env.RETAILCRM_API_KEY?.trim();
-
-  if (!baseUrl || !apiKey) {
-    throw new Error("RETAILCRM env vars are missing.");
-  }
-
-  return createRetailCrmClient({
-    baseUrl,
-    apiKey,
-    defaultSite: process.env.RETAILCRM_SITE_CODE?.trim(),
-  });
-}
 
 function buildEditableOrderPayload(body: Record<string, unknown>) {
   const firstName =
@@ -52,64 +38,6 @@ function buildEditableOrderPayload(body: Record<string, unknown>) {
   };
 }
 
-async function buildOperationalOrderResponse(
-  requestHeaders: Headers,
-  retailcrmId: number,
-  rawOrder: RetailCrmOrderResponse,
-) {
-  await updateOrderSnapshotFromRetailCrm({
-    retailcrmId,
-    rawOrder,
-  });
-
-  const linkSigningSecret = process.env.LINK_SIGNING_SECRET?.trim() ?? null;
-  const retailCrmBaseUrl = process.env.RETAILCRM_BASE_URL?.trim() ?? null;
-  const appBaseUrl = resolveAppBaseUrl(requestHeaders);
-  const managerUrl = linkSigningSecret
-    ? (
-        await buildSignedManagerLink({
-          retailcrmId,
-          secret: linkSigningSecret,
-        })
-      ).path
-    : null;
-  const logisticsUrl = linkSigningSecret
-    ? (
-        await buildSignedLogisticsLink({
-          retailcrmId,
-          secret: linkSigningSecret,
-          baseUrl: appBaseUrl,
-        })
-      ).url
-    : null;
-
-  return buildOperationalOrderRowFromRecord(
-    {
-      retailcrm_id: rawOrder.id,
-      external_id: rawOrder.externalId ?? null,
-      customer_name:
-        [rawOrder.firstName, rawOrder.lastName].filter(Boolean).join(" ").trim() || "Без имени",
-      phone: rawOrder.phone ?? null,
-      email: rawOrder.email ?? null,
-      city: rawOrder.delivery?.address?.city ?? null,
-      total_amount: rawOrder.totalSumm ?? rawOrder.summ ?? 0,
-      created_at: rawOrder.createdAt ?? new Date().toISOString(),
-      status: rawOrder.status ?? null,
-      utm_source:
-        typeof rawOrder.customFields?.utm_source === "string"
-          ? rawOrder.customFields.utm_source
-          : null,
-      telegram_notified_at: null,
-      raw_payload: rawOrder as RetailCrmOrderResponse,
-    },
-    {
-      retailCrmBaseUrl,
-      managerUrl,
-      logisticsUrl,
-    },
-  );
-}
-
 export async function PATCH(
   request: Request,
   context: { params: Promise<{ retailcrmId: string }> },
@@ -127,6 +55,11 @@ export async function PATCH(
     if (!body) {
       return NextResponse.json({ ok: false, error: "Invalid payload" }, { status: 400 });
     }
+
+    await assertOrderWriteAccess({
+      retailcrmId: retailcrmIdNumber,
+      access: normalizeOrderWriteAccessPayload(body.access),
+    });
 
     const retailCrm = createRetailCrmRuntimeClient();
     const editResponse = await retailCrm.editOrder(
@@ -151,6 +84,16 @@ export async function PATCH(
       order,
     });
   } catch (error) {
+    if (error instanceof OrderWriteAccessError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: error.message,
+        },
+        { status: 401 },
+      );
+    }
+
     return NextResponse.json(
       {
         ok: false,
@@ -173,12 +116,22 @@ export async function POST(
       return NextResponse.json({ ok: false, error: "Invalid retailcrmId" }, { status: 400 });
     }
 
-    const body = (await request.json().catch(() => null)) as { action?: string } | null;
+    const body = (await request.json().catch(() => null)) as
+      | {
+          action?: string;
+          access?: unknown;
+        }
+      | null;
     const action = body?.action;
 
     if (action !== "handoff" && action !== "complete") {
       return NextResponse.json({ ok: false, error: "Invalid action" }, { status: 400 });
     }
+
+    await assertOrderWriteAccess({
+      retailcrmId: retailcrmIdNumber,
+      access: normalizeOrderWriteAccessPayload(body?.access),
+    });
 
     const retailCrm = createRetailCrmRuntimeClient();
     const currentOrder = await retailCrm.getOrder(retailcrmIdNumber, { by: "id" });
@@ -219,6 +172,16 @@ export async function POST(
       order,
     });
   } catch (error) {
+    if (error instanceof OrderWriteAccessError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: error.message,
+        },
+        { status: 401 },
+      );
+    }
+
     return NextResponse.json(
       {
         ok: false,

@@ -22,6 +22,18 @@ import {
   sendTelegramTextMessage,
 } from "../src/shared/telegram-api";
 import {
+  acquireRetailCrmSyncLock,
+  releaseRetailCrmSyncLock,
+} from "../src/shared/sync-lock";
+import {
+  createTelegramSendThrottle,
+  getTelegramThrottleWaitMs,
+  resolveTelegramRateLimitDelayMs,
+  scheduleTelegramSend,
+  type TelegramSendThrottle,
+  TELEGRAM_MIN_INTERVAL_MS,
+} from "../src/shared/telegram-send-throttle";
+import {
   buildTelegramNotificationKeyboard,
   formatTelegramOrderMessage,
 } from "../src/shared/telegram";
@@ -31,7 +43,6 @@ import type {
   OrderRecordInput,
 } from "../src/shared/types";
 
-const TELEGRAM_DELAY_MS = 450;
 const TELEGRAM_MAX_ATTEMPTS = 5;
 let notificationLogAvailable = true;
 
@@ -95,6 +106,14 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function waitForTelegramSendSlot(throttle: TelegramSendThrottle) {
+  const waitMs = getTelegramThrottleWaitMs(throttle);
+
+  if (waitMs > 0) {
+    await sleep(waitMs);
+  }
+}
+
 async function recordNotificationLog(
   supabase: ReturnType<typeof createSupabaseAdmin>,
   entry: {
@@ -154,6 +173,7 @@ async function sendTelegramMessageWithRetry(
   supabase: ReturnType<typeof createSupabaseAdmin>,
   botToken: string,
   chatId: string,
+  throttle: TelegramSendThrottle,
   payload: {
     alert_types: NotificationAlertType[];
     retailcrm_id: number;
@@ -195,6 +215,8 @@ async function sendTelegramMessageWithRetry(
   });
 
   for (let attempt = 1; attempt <= TELEGRAM_MAX_ATTEMPTS; attempt += 1) {
+    await waitForTelegramSendSlot(throttle);
+
     try {
       const message = await sendTelegramTextMessage({
         botToken,
@@ -217,6 +239,7 @@ async function sendTelegramMessageWithRetry(
         payload_preview: messageText,
         delivered_at: new Date().toISOString(),
       });
+      scheduleTelegramSend(throttle, TELEGRAM_MIN_INTERVAL_MS);
 
       return;
     } catch (error) {
@@ -234,7 +257,10 @@ async function sendTelegramMessageWithRetry(
           payload_preview: messageText,
           delivered_at: null,
         });
-        await sleep(((Number(error.payload?.parameters?.retry_after ?? 1) || 1) + 1) * 1000);
+        scheduleTelegramSend(
+          throttle,
+          resolveTelegramRateLimitDelayMs(error.payload?.parameters?.retry_after),
+        );
         continue;
       }
 
@@ -336,6 +362,7 @@ async function sendTelegramNotifications(externalIdFilter?: string | null) {
   }
 
   let sentAlertKeys = new Set<string>();
+  const telegramSendThrottle = createTelegramSendThrottle();
 
   if (notificationLogAvailable) {
     let sentLogsQuery = supabase
@@ -397,6 +424,7 @@ async function sendTelegramNotifications(externalIdFilter?: string | null) {
       supabase,
       botToken,
       chatId,
+      telegramSendThrottle,
       {
         alert_types: nextAlertTypes,
         retailcrm_id: Number(row.retailcrm_id),
@@ -426,8 +454,6 @@ async function sendTelegramNotifications(externalIdFilter?: string | null) {
       sentAlertKeys.add(buildNotificationEventKey(Number(row.retailcrm_id), eventType));
     });
     sentCount += nextAlertTypes.length;
-
-    await sleep(TELEGRAM_DELAY_MS);
   }
 
   console.log(`Telegram notifications checked for ${String((data ?? []).length)} orders.`);
@@ -437,33 +463,47 @@ async function sendTelegramNotifications(externalIdFilter?: string | null) {
 
 async function main() {
   const externalIdFilter = readCliOption("external-id")?.trim() || null;
-  const retailCrm = createRetailCrmClient({
-    baseUrl: readRequiredEnv("RETAILCRM_BASE_URL"),
-    apiKey: readRequiredEnv("RETAILCRM_API_KEY"),
-    defaultSite: process.env.RETAILCRM_SITE_CODE?.trim(),
-  });
+  const supabase = createSupabaseAdmin();
+  const lockAcquired = await acquireRetailCrmSyncLock(supabase);
 
-  const orders = externalIdFilter
-    ? [
-        await retailCrm.getOrder(externalIdFilter, {
-          by: "externalId",
+  if (!lockAcquired) {
+    console.log("RetailCRM sync already running, skip this execution.");
+    return;
+  }
+
+  try {
+    const retailCrm = createRetailCrmClient({
+      baseUrl: readRequiredEnv("RETAILCRM_BASE_URL"),
+      apiKey: readRequiredEnv("RETAILCRM_API_KEY"),
+      defaultSite: process.env.RETAILCRM_SITE_CODE?.trim(),
+    });
+
+    const orders = externalIdFilter
+      ? [
+          await retailCrm.getOrder(externalIdFilter, {
+            by: "externalId",
+            siteCode: process.env.RETAILCRM_SITE_CODE?.trim(),
+          }),
+        ]
+      : await retailCrm.listAllOrders({
           siteCode: process.env.RETAILCRM_SITE_CODE?.trim(),
-        }),
-      ]
-    : await retailCrm.listAllOrders({
-        siteCode: process.env.RETAILCRM_SITE_CODE?.trim(),
-        limit: 100,
-      });
+          limit: 100,
+        });
 
-  const records = orders.map((order) =>
-    normalizeRetailCrmOrder(order, { utmFieldCode: process.env.RETAILCRM_UTM_FIELD_CODE }),
-  );
+    const records = orders.map((order) =>
+      normalizeRetailCrmOrder(order, { utmFieldCode: process.env.RETAILCRM_UTM_FIELD_CODE }),
+    );
 
-  await upsertOrders(records);
-  const notified = await sendTelegramNotifications(externalIdFilter);
+    await upsertOrders(records);
+    const notified = await sendTelegramNotifications(externalIdFilter);
 
-  console.log(`Synced orders: ${records.length}`);
-  console.log(`Telegram notifications sent: ${notified}`);
+    console.log(`Synced orders: ${records.length}`);
+    console.log(`Telegram notifications sent: ${notified}`);
+  } finally {
+    await releaseRetailCrmSyncLock(supabase).catch((error) => {
+      console.error("Failed to release sync lock:", error);
+    });
+  }
 }
 
 main().catch((error) => {

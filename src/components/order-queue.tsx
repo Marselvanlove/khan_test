@@ -1,7 +1,7 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { OpsOrderCard } from "@/components/ops-order-card";
-import type { OperationalOrderRow } from "@/shared/types";
+import type { OperationalOrderRow, OrderWriteAccessPayload } from "@/shared/types";
 
 interface OrderQueueProps {
   title: string;
@@ -9,9 +9,17 @@ interface OrderQueueProps {
   description: string;
   rows: OperationalOrderRow[];
   emptyText: string;
+  manageAccess?: OrderWriteAccessPayload | null;
 }
 
-export function OrderQueue({ title, caption, description, rows, emptyText }: OrderQueueProps) {
+export function OrderQueue({
+  title,
+  caption,
+  description,
+  rows,
+  emptyText,
+  manageAccess = null,
+}: OrderQueueProps) {
   return (
     <Card className="border-border/70 bg-card/90 shadow-sm">
       <CardHeader>
@@ -24,7 +32,11 @@ export function OrderQueue({ title, caption, description, rows, emptyText }: Ord
           <ScrollArea className="h-[32rem] pr-4">
             <div className="grid gap-4">
               {rows.map((row) => (
-                <OpsOrderCard key={`${row.retailcrm_id}-${row.crm_number}`} order={row} />
+                <OpsOrderCard
+                  key={`${row.retailcrm_id}-${row.crm_number}`}
+                  order={row}
+                  manageAccess={manageAccess}
+                />
               ))}
             </div>
           </ScrollArea>

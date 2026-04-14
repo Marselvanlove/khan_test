@@ -5,8 +5,9 @@ import { useRouter } from "next/navigation";
 import { CheckIcon, CopyIcon, PackageCheckIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import type { OperationalOrderRow } from "@/shared/types";
+import type { OperationalOrderRow, OrderWriteAccessPayload } from "@/shared/types";
 import type { OrderStatusAction } from "@/shared/orders";
+import { getKanbanStageFromStatus, isKanbanStageTransitionAllowed } from "@/shared/kanban";
 
 interface DeliveryActionsProps {
   url: string | null;
@@ -14,6 +15,7 @@ interface DeliveryActionsProps {
   statusCode: string | null;
   statusGroup: string;
   onOrderUpdated?: (order: OperationalOrderRow) => void;
+  access?: OrderWriteAccessPayload | null;
 }
 
 interface ActionResponse {
@@ -29,16 +31,38 @@ export function DeliveryActions({
   statusCode,
   statusGroup,
   onOrderUpdated,
+  access = null,
 }: DeliveryActionsProps) {
   const router = useRouter();
   const [copied, setCopied] = useState(false);
   const [pendingAction, setPendingAction] = useState<OrderStatusAction | null>(null);
   const [isPending, startTransition] = useTransition();
+  const currentStage = getKanbanStageFromStatus({
+    statusCode,
+    statusGroup,
+  });
+  const canHandoff =
+    currentStage != null &&
+    (currentStage === "delivery" || isKanbanStageTransitionAllowed(currentStage, "delivery"));
+  const canComplete =
+    currentStage != null &&
+    (currentStage === "complete" || isKanbanStageTransitionAllowed(currentStage, "complete"));
 
   const handoffDisabled =
-    !url || isPending || pendingAction !== null || statusGroup === "complete" || statusGroup === "cancel";
+    !access ||
+    !url ||
+    isPending ||
+    pendingAction !== null ||
+    statusGroup === "complete" ||
+    statusGroup === "cancel" ||
+    !canHandoff;
   const completeDisabled =
-    isPending || pendingAction !== null || statusGroup === "complete" || statusGroup === "cancel";
+    !access ||
+    isPending ||
+    pendingAction !== null ||
+    statusGroup === "complete" ||
+    statusGroup === "cancel" ||
+    !canComplete;
 
   function syncOrder(order: OperationalOrderRow | undefined) {
     if (order && onOrderUpdated) {
@@ -51,12 +75,22 @@ export function DeliveryActions({
   }
 
   async function runAction(action: OrderStatusAction) {
-    const response = await fetch(`/api/orders/${retailcrmId}`, {
+    const targetStatusCode =
+      action === "handoff"
+        ? statusGroup === "delivery"
+          ? statusCode ?? "send-to-delivery"
+          : "send-to-delivery"
+        : "complete";
+    const response = await fetch(`/api/orders/${retailcrmId}/status`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ action }),
+      body: JSON.stringify({
+        target_status_code: targetStatusCode,
+        source: "quick-action",
+        access,
+      }),
     });
     const payload = (await response.json().catch(() => null)) as ActionResponse | null;
 

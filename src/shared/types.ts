@@ -141,6 +141,24 @@ export interface RetailCrmEditOrderResponse {
   errorMsg?: string;
 }
 
+export interface RetailCrmStatusReference {
+  id?: number;
+  name: string;
+  code: string;
+  group?: string | null;
+  active?: boolean;
+  external?: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface RetailCrmStatusesListResponse {
+  success: boolean;
+  statuses?: RetailCrmStatusReference[];
+  errors?: string[] | Record<string, string[]>;
+  errorMsg?: string;
+}
+
 export interface OrderRecordInput {
   retailcrm_id: number;
   external_id: string | null;
@@ -170,6 +188,12 @@ export interface TelegramOrderContext {
   retailcrm_base_url?: string | null;
   alert_types: NotificationAlertType[];
   raw_payload: RetailCrmOrderResponse;
+}
+
+export interface OrderWriteAccessPayload {
+  manager_signature?: string | null;
+  manager_expires_at?: number | null;
+  operator_token?: string | null;
 }
 
 export interface DailyMetric {
@@ -381,10 +405,21 @@ export interface OperationsStatusFlowItem extends StatusSummaryItem {
   share: number;
 }
 
+export type KanbanStage = "new" | "approval" | "assembling" | "delivery" | "complete" | "cancel";
+
+export interface KanbanStatusOption {
+  code: string;
+  label: string;
+  stage: KanbanStage;
+  active: boolean;
+}
+
 export interface OperationsTabData {
   high_value_threshold: number;
   kpis: OperationsKpiItem[];
   statusFlow: OperationsStatusFlowItem[];
+  kanbanOrders: OperationalOrderRow[];
+  kanbanStatuses: KanbanStatusOption[];
   actionQueue: OperationalOrderRow[];
   priorityQueue: OperationalOrderRow[];
   problemQueue: OperationalOrderRow[];

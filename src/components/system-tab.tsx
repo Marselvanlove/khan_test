@@ -11,7 +11,7 @@ interface SystemTabProps {
 export function SystemTab({ settings, overview, notificationLogs }: SystemTabProps) {
   return (
     <div className="grid gap-6">
-      <AdminSettingsPanel settings={settings} overview={overview} />
+      <AdminSettingsPanel settings={settings} overview={overview} editable={false} />
       <NotificationLogList rows={notificationLogs} />
     </div>
   );

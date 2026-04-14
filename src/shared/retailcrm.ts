@@ -5,6 +5,7 @@ import type {
   RetailCrmOrderReferenceBy,
   RetailCrmOrderResponse,
   RetailCrmOrdersListResponse,
+  RetailCrmStatusesListResponse,
 } from "./types";
 
 export interface RetailCrmClientConfig {
@@ -218,6 +219,10 @@ export function createRetailCrmClient(config: RetailCrmClientConfig) {
         `orders/${encodeURIComponent(String(reference))}/edit`,
         body,
       );
+    },
+
+    async listOrderStatuses(): Promise<RetailCrmStatusesListResponse> {
+      return getJson<RetailCrmStatusesListResponse>("reference/statuses", new URLSearchParams());
     },
   };
 }

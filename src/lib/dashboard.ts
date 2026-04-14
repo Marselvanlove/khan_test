@@ -1,4 +1,5 @@
 import { createSupabaseServerClient } from "./supabase-server";
+import { loadRetailCrmKanbanStatuses } from "./order-status-server";
 import type {
   AdminSettings,
   DailyMetric,
@@ -38,6 +39,8 @@ import {
   summarizeMetrics,
   PREMIUM_EXPRESS_THRESHOLD,
 } from "@/shared/orders";
+import { buildKanbanStatusLabelMap } from "@/shared/kanban";
+import { buildNotificationLogFeed } from "@/shared/notification-logs";
 import { buildSignedLogisticsLink, buildSignedManagerLink } from "@/shared/order-links";
 import {
   buildNotificationEventKey,
@@ -313,6 +316,8 @@ function sortOrdersByUrgency(left: OperationalOrderRow, right: OperationalOrderR
 
 function buildOperationsTabData(
   orders: OperationalOrderRow[],
+  kanbanOrders: OperationalOrderRow[],
+  kanbanStatuses: OperationsTabData["kanbanStatuses"],
   pendingNotificationOrders: OperationalOrderRow[],
   adminSettings: AdminSettings,
 ): OperationsTabData {
@@ -426,6 +431,8 @@ function buildOperationsTabData(
       },
     ],
     statusFlow,
+    kanbanOrders,
+    kanbanStatuses,
     actionQueue,
     priorityQueue,
     problemQueue,
@@ -831,7 +838,7 @@ export async function getDashboardData(): Promise<DashboardData> {
   const linkSigningSecret = process.env.LINK_SIGNING_SECRET?.trim() ?? null;
   const appBaseUrl = process.env.APP_BASE_URL?.trim() ?? null;
 
-  const [metricsResult, allOrdersResult, notificationLogsResult, adminSettingsResult] =
+  const [metricsResult, allOrdersResult, notificationLogsResult, adminSettingsResult, kanbanStatuses] =
     await Promise.all([
       supabase.from("daily_order_metrics").select("*").order("order_date", { ascending: true }),
       supabase
@@ -840,7 +847,7 @@ export async function getDashboardData(): Promise<DashboardData> {
         .order("created_at", { ascending: false }),
     supabase
       .from("notification_logs")
-      .select("order_retailcrm_id, order_number, channel, recipient, status, attempt, rate_limited, error_message, created_at, delivered_at")
+      .select("order_retailcrm_id, order_number, event_type, channel, recipient, status, attempt, rate_limited, error_message, created_at, delivered_at")
       .order("created_at", { ascending: false })
       .limit(500),
       supabase
@@ -850,6 +857,7 @@ export async function getDashboardData(): Promise<DashboardData> {
         )
         .eq("singleton_key", "default")
         .maybeSingle(),
+      loadRetailCrmKanbanStatuses(),
     ]);
 
   const logsMissingTable = isMissingSupabaseTableError(notificationLogsResult.error);
@@ -877,6 +885,7 @@ export async function getDashboardData(): Promise<DashboardData> {
       ? DEFAULT_ADMIN_SETTINGS
       : normalizeAdminSettings(adminSettingsResult.data as Record<string, unknown>);
   const metrics = (metricsResult.data ?? []).map((metric) => normalizeMetric(metric as Record<string, unknown>));
+  const statusLabels = buildKanbanStatusLabelMap(kanbanStatuses);
   const allOrders = await Promise.all(
     (allOrdersResult.data ?? []).map(async (row) => {
       const retailcrmId = Number((row as Record<string, unknown>).retailcrm_id);
@@ -902,6 +911,7 @@ export async function getDashboardData(): Promise<DashboardData> {
         retailCrmBaseUrl,
         managerUrl,
         logisticsUrl,
+        statusLabels,
       });
     }),
   );
@@ -939,13 +949,33 @@ export async function getDashboardData(): Promise<DashboardData> {
 
       return Date.parse(right.created_at) - Date.parse(left.created_at);
     });
+  const pendingByOrderId = new Map(
+    pendingNotificationOrders.map((order) => [order.retailcrm_id, order.alert_reasons]),
+  );
+  const kanbanOrders = allOrders
+    .map((order) => ({
+      ...order,
+      alert_reasons: dedupeReasons([
+        order.status_group === "new" ? "Новый заказ" : "",
+        order.status_group === "approval" ? "Ждёт согласования" : "",
+        order.total_amount > adminSettings.high_value_threshold && isOperationallyActive(order)
+          ? order.segment_label
+          : "",
+        order.missing_contact ? "Нет телефона или email" : "",
+        !order.address?.trim() ? "Нет адреса" : "",
+        !order.items.length ? "Ошибка данных" : "",
+        ...(pendingByOrderId.get(order.retailcrm_id) ?? []),
+        ...(isSlaOverdue(order) ? ["SLA просрочен"] : []),
+      ]),
+    }))
+    .sort(sortOrdersByUrgency);
   const sourceMetrics = buildSourceMetrics(
     allOrders.map((order) => ({
       utm_source: order.utm_source,
       total_amount: order.total_amount,
     })),
   );
-  const notificationLogs = allNotificationLogs.slice(0, 8);
+  const notificationLogs = buildNotificationLogFeed(allNotificationLogs, 8);
   const ownerMetrics = buildOwnerMetrics(allOrders, pendingNotificationOrders);
   const summary = summarizeMetrics(allOrders, adminSettings.high_value_threshold);
   const reportPeriodLabel = buildGraphsPeriodLabel(metrics);
@@ -971,6 +1001,8 @@ export async function getDashboardData(): Promise<DashboardData> {
   };
   const operationsData = buildOperationsTabData(
     allOrders,
+    kanbanOrders,
+    kanbanStatuses,
     pendingNotificationOrders,
     adminSettings,
   );

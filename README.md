@@ -54,6 +54,7 @@ cp .env.example .env.local
 - `SUPABASE_PUBLISHABLE_KEY` — опционально, если позже появится публичный клиент
 - `APP_BASE_URL` — абсолютный URL Next.js-приложения для кнопки `Открыть` и share-ссылок
 - `LINK_SIGNING_SECRET` — подпись manager/share ссылок
+- `DASHBOARD_OPERATOR_TOKEN` — опциональный приватный токен для защищённых write-операций вне manager-link; публичный dashboard по умолчанию работает в read-only режиме
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID` — для текущего решения `-1003953849238`
 - `TELEGRAM_WEBHOOK_SECRET` — секрет заголовка `X-Telegram-Bot-Api-Secret-Token`
@@ -100,10 +101,12 @@ npm run import:retailcrm
 
 ### 1. Выполни миграцию
 
-Через SQL Editor выполни файл:
+Через SQL Editor выполни файлы в таком порядке:
 
 - `supabase/migrations/20260413182000_init_orders.sql`
 - `supabase/migrations/20260413194500_notification_logs.sql`
+- `supabase/migrations/20260413213000_admin_settings_and_notification_rules.sql`
+- `supabase/migrations/20260414090000_telegram_message_states.sql`
 
 ### 2. Ручной синк
 
@@ -187,6 +190,7 @@ npm run sync:retailcrm -- --external-id demo-1710000000-001
 - `Передать курьеру` на manager page копирует signed logistics page `/orders/[retailcrmId]/logistics?token=...` и переводит заказ в RetailCRM статус `send-to-delivery`, если он ещё не в группе доставки
 - `Сделка завершена` на manager page переводит заказ в RetailCRM статус `complete`
 - `Выполнено` требует подтверждение и затем переводит заказ в RetailCRM статус `complete`
+- публичный dashboard на `/` intentionally read-only: изменения заказа доступны только по signed manager-link, чтобы Vercel demo не открывал write-доступ в RetailCRM
 
 Webhook для callback-кнопок:
 
@@ -232,6 +236,7 @@ git push -u origin main
 - `GitHub`: код опубликован в `main` ветку репозитория `Marselvanlove/khan_test`
 - `Supabase`: `orders` и `daily_order_metrics` заполнены, `utm_source` backfill выполнен
 - `Vercel`: git-репозиторий готов, но сам Vercel project ещё не создан и env vars туда не заведены
+- `Security`: публичные write-операции закрыты; order mutations теперь требуют signed manager-link или приватный `DASHBOARD_OPERATOR_TOKEN`
 
 ## Промпты для AI-инструмента
 

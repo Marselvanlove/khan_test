@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { assertDashboardOperatorAccess } from "@/lib/order-write-access";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import {
   DEFAULT_ADMIN_SETTINGS,
@@ -23,6 +24,8 @@ function readValue(formData: FormData, key: string, fallback: string | number): 
 }
 
 export async function updateAdminSettings(formData: FormData) {
+  assertDashboardOperatorAccess(formData.get("operator_token"));
+
   const supabase = createSupabaseServerClient();
 
   if (!supabase) {

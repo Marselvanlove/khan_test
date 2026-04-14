@@ -9,6 +9,18 @@ interface NotificationLogListProps {
   rows: NotificationLogItem[];
 }
 
+function getStatusVariant(status: string) {
+  if (status === "sent") {
+    return "secondary" as const;
+  }
+
+  if (status === "rate_limited") {
+    return "outline" as const;
+  }
+
+  return "destructive" as const;
+}
+
 export function NotificationLogList({ rows }: NotificationLogListProps) {
   return (
     <Card className="border-border/70 bg-card/90 shadow-sm">
@@ -37,7 +49,7 @@ export function NotificationLogList({ rows }: NotificationLogListProps) {
                   <TableCell><code>{row.order_number ?? row.order_retailcrm_id}</code></TableCell>
                   <TableCell>{getAlertTypeLabel(row.event_type)}</TableCell>
                   <TableCell>
-                    <Badge variant={row.status === "sent" ? "secondary" : "destructive"}>
+                    <Badge variant={getStatusVariant(row.status)}>
                       {row.status}
                     </Badge>
                   </TableCell>

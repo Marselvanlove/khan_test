@@ -42,10 +42,15 @@ import {
   getKnownStatusOptions,
   splitCustomerName,
 } from "@/shared/orders";
-import type { OperationalOrderRow } from "@/shared/types";
+import type { OperationalOrderRow, OrderWriteAccessPayload } from "@/shared/types";
+import { cn } from "@/lib/utils";
 
 interface OpsOrderCardProps {
   order: OperationalOrderRow;
+  variant?: "queue" | "kanban";
+  onOrderUpdated?: (order: OperationalOrderRow) => void;
+  onRequestStatusChange?: () => void;
+  manageAccess?: OrderWriteAccessPayload | null;
 }
 
 interface EditableOrderState {
@@ -90,7 +95,7 @@ function LinkButton({
   }
 
   return (
-    <Button asChild size="sm" variant="outline">
+    <Button asChild size="sm" variant="outline" className="min-w-0">
       <a href={href} target="_blank" rel="noreferrer">
         {children}
       </a>
@@ -107,18 +112,31 @@ function syncOrderState(
   setDraft(toEditableState(nextOrder));
 }
 
-export function OpsOrderCard({ order: initialOrder }: OpsOrderCardProps) {
+export function OpsOrderCard({
+  order: initialOrder,
+  variant = "queue",
+  onOrderUpdated,
+  onRequestStatusChange,
+  manageAccess = null,
+}: OpsOrderCardProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [order, setOrder] = useState(initialOrder);
   const [draft, setDraft] = useState<EditableOrderState>(() => toEditableState(initialOrder));
   const [isPending, startUiTransition] = useTransition();
+  const isKanban = variant === "kanban";
+  const canManage = Boolean(manageAccess);
 
   useEffect(() => {
     setOrder(initialOrder);
     setDraft(toEditableState(initialOrder));
   }, [initialOrder]);
+
+  function applyOrderUpdate(nextOrder: OperationalOrderRow) {
+    syncOrderState(nextOrder, setOrder, setDraft);
+    onOrderUpdated?.(nextOrder);
+  }
 
   return (
     <Sheet
@@ -132,75 +150,146 @@ export function OpsOrderCard({ order: initialOrder }: OpsOrderCardProps) {
         }
       }}
     >
-      <Card className="border-border/70 bg-card/90 shadow-sm">
-        <CardHeader className="gap-4">
-          <div className="flex items-start justify-between gap-4">
-            <div className="space-y-2">
-              <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-primary">
-                <code>{order.crm_number}</code>
-              </p>
-              <CardTitle className="text-xl font-semibold">{order.customer_name}</CardTitle>
-            </div>
-            <p className="text-right text-lg font-semibold italic text-foreground">
-              {formatCurrencyKzt(order.total_amount)}
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Badge variant="secondary">{order.segment_label}</Badge>
-            <Badge variant="outline">{order.status_label}</Badge>
-            <Badge>{order.sla_label}</Badge>
-            <Badge variant={order.unknown_source ? "destructive" : "outline"}>
-              {order.source_label}
-            </Badge>
-            {order.alert_reasons.map((reason) => (
-              <Badge key={`${order.crm_number}-${reason}`} variant="destructive">
-                {reason}
-              </Badge>
-            ))}
-          </div>
-        </CardHeader>
+      <Card className={cn("border-border/70 bg-card/90 shadow-sm", isKanban && "w-full overflow-hidden")}>
+        {isKanban ? (
+          <>
+            <CardContent className="grid gap-3 p-4">
+              <SheetTrigger asChild>
+                <button type="button" className="grid w-full gap-3 text-left">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 space-y-1">
+                      <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-primary">
+                        <code>{order.crm_number}</code>
+                      </p>
+                      <CardTitle className="break-words text-base font-semibold">{order.customer_name}</CardTitle>
+                    </div>
+                    <p className="shrink-0 text-right text-sm font-semibold italic text-foreground">
+                      {formatCurrencyKzt(order.total_amount)}
+                    </p>
+                  </div>
 
-        <CardContent className="space-y-4 text-sm">
-          <div className="grid gap-2 text-muted-foreground">
-            <p><strong>Телефон:</strong> {order.phone ?? "не указан"}</p>
-            <p><strong>Email:</strong> {order.email ?? "не указан"}</p>
-            <div className="flex flex-col gap-1">
-              <span><strong>Адрес:</strong></span>
-              <AddressMapChooser address={order.address} city={order.city} compact />
-            </div>
-            <p><strong>Дата:</strong> {formatOrderDateTime(order.created_at)}</p>
-          </div>
+                  <p className="text-xs text-muted-foreground">
+                    {formatOrderDateTime(order.created_at)}
+                  </p>
 
-          <Separator />
+                  <div className="flex flex-wrap gap-2">
+                    <Badge variant="outline" className="max-w-full break-words whitespace-normal">
+                      {order.status_label}
+                    </Badge>
+                    {order.alert_reasons.slice(0, 2).map((reason) => (
+                      <Badge
+                        key={`${order.crm_number}-${reason}`}
+                        variant="destructive"
+                        className="max-w-full break-words whitespace-normal"
+                      >
+                        {reason}
+                      </Badge>
+                    ))}
+                  </div>
+                </button>
+              </SheetTrigger>
 
-          <div className="grid gap-2">
-            {order.items.slice(0, 2).map((item) => (
-              <p
-                key={`${order.crm_number}-${item.name}`}
-                className="text-sm leading-6 text-foreground/80"
-              >
-                {formatOrderItemUnitLine(item)}
-              </p>
-            ))}
-            {order.items.length > 2 ? (
-              <p className="text-xs text-muted-foreground">Ещё {order.items.length - 2} позиций</p>
-            ) : null}
-          </div>
-        </CardContent>
+              <div className="grid gap-2 overflow-hidden">
+                {order.items.slice(0, 2).map((item) => (
+                  <p
+                    key={`${order.crm_number}-${item.name}`}
+                    className="line-clamp-2 break-words text-xs leading-5 text-foreground/80"
+                  >
+                    {formatOrderItemUnitLine(item)}
+                  </p>
+                ))}
+              </div>
+            </CardContent>
 
-        <CardFooter className="flex flex-wrap gap-2">
-          <SheetTrigger asChild>
-            <Button size="sm">Детали</Button>
-          </SheetTrigger>
-          <LinkButton href={order.whatsapp_url}>
-            <MessageCircleIcon data-icon="inline-start" />
-            WhatsApp
-          </LinkButton>
-          <LinkButton href={order.retailcrm_url}>
-            <ExternalLinkIcon data-icon="inline-start" />
-            RetailCRM
-          </LinkButton>
-        </CardFooter>
+            <CardFooter className="flex flex-wrap gap-2 border-t border-border/70 px-4 py-3">
+              {canManage ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="min-w-0"
+                  onClick={() => onRequestStatusChange?.()}
+                >
+                  Сменить статус
+                </Button>
+              ) : null}
+              <LinkButton href={order.whatsapp_url}>
+                <MessageCircleIcon data-icon="inline-start" />
+                WhatsApp
+              </LinkButton>
+            </CardFooter>
+          </>
+        ) : (
+          <>
+            <CardHeader className="gap-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-2">
+                  <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-primary">
+                    <code>{order.crm_number}</code>
+                  </p>
+                  <CardTitle className="text-xl font-semibold">{order.customer_name}</CardTitle>
+                </div>
+                <p className="text-right text-lg font-semibold italic text-foreground">
+                  {formatCurrencyKzt(order.total_amount)}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Badge variant="secondary">{order.segment_label}</Badge>
+                <Badge variant="outline">{order.status_label}</Badge>
+                <Badge>{order.sla_label}</Badge>
+                <Badge variant={order.unknown_source ? "destructive" : "outline"}>
+                  {order.source_label}
+                </Badge>
+                {order.alert_reasons.map((reason) => (
+                  <Badge key={`${order.crm_number}-${reason}`} variant="destructive">
+                    {reason}
+                  </Badge>
+                ))}
+              </div>
+            </CardHeader>
+
+            <CardContent className="space-y-4 text-sm">
+              <div className="grid gap-2 text-muted-foreground">
+                <p><strong>Телефон:</strong> {order.phone ?? "не указан"}</p>
+                <p><strong>Email:</strong> {order.email ?? "не указан"}</p>
+                <div className="flex flex-col gap-1">
+                  <span><strong>Адрес:</strong></span>
+                  <AddressMapChooser address={order.address} city={order.city} compact />
+                </div>
+                <p><strong>Дата:</strong> {formatOrderDateTime(order.created_at)}</p>
+              </div>
+
+              <Separator />
+
+              <div className="grid gap-2">
+                {order.items.slice(0, 2).map((item) => (
+                  <p
+                    key={`${order.crm_number}-${item.name}`}
+                    className="text-sm leading-6 text-foreground/80"
+                  >
+                    {formatOrderItemUnitLine(item)}
+                  </p>
+                ))}
+                {order.items.length > 2 ? (
+                  <p className="text-xs text-muted-foreground">Ещё {order.items.length - 2} позиций</p>
+                ) : null}
+              </div>
+            </CardContent>
+
+            <CardFooter className="flex flex-wrap gap-2">
+              <SheetTrigger asChild>
+                <Button size="sm">Детали</Button>
+              </SheetTrigger>
+              <LinkButton href={order.whatsapp_url}>
+                <MessageCircleIcon data-icon="inline-start" />
+                WhatsApp
+              </LinkButton>
+              <LinkButton href={order.retailcrm_url}>
+                <ExternalLinkIcon data-icon="inline-start" />
+                RetailCRM
+              </LinkButton>
+            </CardFooter>
+          </>
+        )}
       </Card>
 
       <SheetContent className="w-full sm:max-w-2xl">
@@ -212,7 +301,9 @@ export function OpsOrderCard({ order: initialOrder }: OpsOrderCardProps) {
           <SheetDescription>
             {isEditing
               ? "Правки применяются в RetailCRM и сразу обновляют локальный snapshot."
-              : "Быстрый боковой просмотр заказа. Из этого же окна можно перейти в режим редактирования."}
+              : canManage
+                ? "Быстрый боковой просмотр заказа. Из этого же окна можно перейти в режим редактирования."
+                : "Быстрый боковой просмотр заказа. Публичный dashboard остаётся read-only, без прямых правок CRM."}
           </SheetDescription>
         </SheetHeader>
 
@@ -263,22 +354,27 @@ export function OpsOrderCard({ order: initialOrder }: OpsOrderCardProps) {
               </div>
 
               <div className="flex flex-wrap gap-2">
-                <Button
-                  onClick={() => {
-                    setDraft(toEditableState(order));
-                    setIsEditing(true);
-                  }}
-                >
-                  <PencilIcon data-icon="inline-start" />
-                  Редактировать
-                </Button>
-                <DeliveryActions
-                  url={order.logistics_url}
-                  retailcrmId={order.retailcrm_id}
-                  statusCode={order.status_code}
-                  statusGroup={order.status_group}
-                  onOrderUpdated={(nextOrder) => syncOrderState(nextOrder, setOrder, setDraft)}
-                />
+                {canManage ? (
+                  <Button
+                    onClick={() => {
+                      setDraft(toEditableState(order));
+                      setIsEditing(true);
+                    }}
+                  >
+                    <PencilIcon data-icon="inline-start" />
+                    Редактировать
+                  </Button>
+                ) : null}
+                {canManage ? (
+                  <DeliveryActions
+                    url={order.logistics_url}
+                    retailcrmId={order.retailcrm_id}
+                    statusCode={order.status_code}
+                    statusGroup={order.status_group}
+                    onOrderUpdated={applyOrderUpdate}
+                    access={manageAccess}
+                  />
+                ) : null}
                 <LinkButton href={order.whatsapp_url}>
                   <MessageCircleIcon data-icon="inline-start" />
                   Написать в WhatsApp
@@ -301,7 +397,10 @@ export function OpsOrderCard({ order: initialOrder }: OpsOrderCardProps) {
                     headers: {
                       "Content-Type": "application/json",
                     },
-                    body: JSON.stringify(draft),
+                    body: JSON.stringify({
+                      ...draft,
+                      access: manageAccess,
+                    }),
                   })
                     .then(async (response) => {
                       const payload = (await response.json().catch(() => null)) as
@@ -312,8 +411,7 @@ export function OpsOrderCard({ order: initialOrder }: OpsOrderCardProps) {
                         throw new Error(payload?.error ?? "Не удалось сохранить заказ.");
                       }
 
-                      setOrder(payload.order);
-                      setDraft(toEditableState(payload.order));
+                      applyOrderUpdate(payload.order);
                       setIsEditing(false);
                       toast.success("Изменения сохранены.");
                       startTransition(() => {
@@ -475,7 +573,8 @@ export function OpsOrderCard({ order: initialOrder }: OpsOrderCardProps) {
                   retailcrmId={order.retailcrm_id}
                   statusCode={order.status_code}
                   statusGroup={order.status_group}
-                  onOrderUpdated={(nextOrder) => syncOrderState(nextOrder, setOrder, setDraft)}
+                  onOrderUpdated={applyOrderUpdate}
+                  access={manageAccess}
                 />
                 <LinkButton href={order.whatsapp_url}>
                   <MessageCircleIcon data-icon="inline-start" />

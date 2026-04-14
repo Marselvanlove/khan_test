@@ -164,6 +164,10 @@ export default async function OrderPage({
                   retailcrmId={order.retailcrm_id}
                   statusCode={order.status_code}
                   statusGroup={order.status_group}
+                  access={{
+                    manager_signature: signature,
+                    manager_expires_at: expiresAt,
+                  }}
                 />
                 {order.whatsapp_url ? (
                   <Button asChild variant="outline">

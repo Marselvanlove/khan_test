@@ -2,15 +2,22 @@
 
 import { useMemo, useState } from "react";
 import { XIcon } from "lucide-react";
+import { OperationsKanban } from "@/components/operations-kanban";
 import { OrderQueue } from "@/components/order-queue";
 import { StatusBreakdown } from "@/components/status-breakdown";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import type { OperationsKpiItem, OperationsTabData, OperationalOrderRow } from "@/shared/types";
+import type {
+  OperationsKpiItem,
+  OperationsTabData,
+  OperationalOrderRow,
+  OrderWriteAccessPayload,
+} from "@/shared/types";
 import { cn } from "@/lib/utils";
 
 interface OperationsTabProps {
   data: OperationsTabData;
+  manageAccess?: OrderWriteAccessPayload | null;
 }
 
 type OperationsFilter =
@@ -82,8 +89,10 @@ function matchesFilter(
   return matchesMetric(order, filter.key, highValueThreshold);
 }
 
-export function OperationsTab({ data }: OperationsTabProps) {
+export function OperationsTab({ data, manageAccess = null }: OperationsTabProps) {
   const [activeFilter, setActiveFilter] = useState<OperationsFilter>({ type: "all" });
+  const [viewMode, setViewMode] = useState<"list" | "kanban">("list");
+  const canManage = Boolean(manageAccess);
 
   const filteredQueues = useMemo(
     () => ({
@@ -98,6 +107,13 @@ export function OperationsTab({ data }: OperationsTabProps) {
       ),
     }),
     [activeFilter, data.actionQueue, data.high_value_threshold, data.priorityQueue, data.problemQueue],
+  );
+  const filteredKanbanOrders = useMemo(
+    () =>
+      data.kanbanOrders.filter((order) =>
+        matchesFilter(order, activeFilter, data.high_value_threshold),
+      ),
+    [activeFilter, data.high_value_threshold, data.kanbanOrders],
   );
 
   return (
@@ -155,42 +171,79 @@ export function OperationsTab({ data }: OperationsTabProps) {
           <div className="space-y-1">
             <CardTitle>Фокус оператора</CardTitle>
             <CardDescription>
-              {getFilterTitle(activeFilter)}. Фильтр применяется сразу ко всем рабочим очередям ниже.
+              {getFilterTitle(activeFilter)}. Фильтр применяется сразу ко всем представлениям ниже.
             </CardDescription>
+            {!canManage ? (
+              <p className="text-sm text-muted-foreground">
+                Публичный дашборд работает в read-only режиме. Изменение статусов доступно только
+                из подписанной manager-link.
+              </p>
+            ) : null}
           </div>
-          {activeFilter.type !== "all" ? (
-            <Button variant="outline" size="sm" onClick={() => setActiveFilter({ type: "all" })}>
-              <XIcon data-icon="inline-start" />
-              Сбросить
-            </Button>
-          ) : null}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="inline-flex rounded-xl border border-border/70 bg-background/70 p-1">
+              <Button
+                variant={viewMode === "list" ? "default" : "ghost"}
+                size="sm"
+                onClick={() => setViewMode("list")}
+              >
+                Список
+              </Button>
+              <Button
+                variant={viewMode === "kanban" ? "default" : "ghost"}
+                size="sm"
+                onClick={() => setViewMode("kanban")}
+              >
+                Kanban
+              </Button>
+            </div>
+            {activeFilter.type !== "all" ? (
+              <Button variant="outline" size="sm" onClick={() => setActiveFilter({ type: "all" })}>
+                <XIcon data-icon="inline-start" />
+                Сбросить
+              </Button>
+            ) : null}
+          </div>
         </CardHeader>
       </Card>
 
-      <div className="grid gap-6 xl:grid-cols-2">
-        <OrderQueue
-          title="Требуют действия сейчас"
-          caption="Action Queue"
-          description="Основной рабочий поток: новые и ожидающие заказы, где менеджер должен вмешаться прямо сейчас."
-          rows={filteredQueues.actionQueue}
-          emptyText="По текущему фильтру срочных действий нет."
+      {viewMode === "kanban" ? (
+        <OperationsKanban
+          orders={filteredKanbanOrders}
+          statuses={data.kanbanStatuses}
+          manageAccess={manageAccess}
         />
-        <OrderQueue
-          title="Крупные / премиальные заказы"
-          caption={`Порог ${Math.round(data.high_value_threshold / 1000)}k+`}
-          description="Приоритетный поток крупных корзин, где важны скорость реакции, точность и контроль SLA."
-          rows={filteredQueues.priorityQueue}
-          emptyText="По текущему фильтру крупных активных заказов нет."
-        />
-      </div>
+      ) : (
+        <>
+          <div className="grid gap-6 xl:grid-cols-2">
+            <OrderQueue
+              title="Требуют действия сейчас"
+              caption="Action Queue"
+              description="Основной рабочий поток: новые и ожидающие заказы, где менеджер должен вмешаться прямо сейчас."
+              rows={filteredQueues.actionQueue}
+              emptyText="По текущему фильтру срочных действий нет."
+              manageAccess={manageAccess}
+            />
+            <OrderQueue
+              title="Крупные / премиальные заказы"
+              caption={`Порог ${Math.round(data.high_value_threshold / 1000)}k+`}
+              description="Приоритетный поток крупных корзин, где важны скорость реакции, точность и контроль SLA."
+              rows={filteredQueues.priorityQueue}
+              emptyText="По текущему фильтру крупных активных заказов нет."
+              manageAccess={manageAccess}
+            />
+          </div>
 
-      <OrderQueue
-        title="Проблемные заказы"
-        caption="Risk Queue"
-        description="Заказы с отсутствующими данными, непройденными уведомлениями или другими операционными рисками."
-        rows={filteredQueues.problemQueue}
-        emptyText="По текущему фильтру проблемных заказов нет."
-      />
+          <OrderQueue
+            title="Проблемные заказы"
+            caption="Risk Queue"
+            description="Заказы с отсутствующими данными, непройденными уведомлениями или другими операционными рисками."
+            rows={filteredQueues.problemQueue}
+            emptyText="По текущему фильтру проблемных заказов нет."
+            manageAccess={manageAccess}
+          />
+        </>
+      )}
     </div>
   );
 }

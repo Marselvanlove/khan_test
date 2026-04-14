@@ -795,6 +795,7 @@ export function buildOperationalOrderRowFromRecord(
     retailCrmBaseUrl: string | null;
     managerUrl?: string | null;
     logisticsUrl?: string | null;
+    statusLabels?: Record<string, string>;
   },
 ): OperationalOrderRow {
   const rawPayload = row.raw_payload as RetailCrmOrderResponse;
@@ -831,7 +832,7 @@ export function buildOperationalOrderRowFromRecord(
     utm_source: source,
     source_label: formatSourceLabel(source),
     status_code: statusCode,
-    status_label: statusMeta.label,
+    status_label: statusCode ? options.statusLabels?.[statusCode] ?? statusMeta.label : statusMeta.label,
     status_group: statusMeta.group,
     status_group_label: statusMeta.groupLabel,
     segment_code: segment.code,
