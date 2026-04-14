@@ -66,6 +66,7 @@ function compactKzt(value: number) {
 
 function buildRevenueTicks(points: GraphsTrendPoint[], highValueThreshold: number) {
   const maxRevenue = Math.max(
+    500_000,
     highValueThreshold * 2,
     ...points.map((point) => point.revenue),
     1,
