@@ -16,6 +16,13 @@ export async function acquireRetailCrmSyncLock(
   });
 
   if (error) {
+    if (
+      error.message?.includes("Could not find the function") ||
+      error.message?.includes("schema cache")
+    ) {
+      return true;
+    }
+
     throw new Error(error.message ?? "Failed to acquire sync lock");
   }
 
@@ -31,6 +38,13 @@ export async function releaseRetailCrmSyncLock(
   });
 
   if (error) {
+    if (
+      error.message?.includes("Could not find the function") ||
+      error.message?.includes("schema cache")
+    ) {
+      return;
+    }
+
     throw new Error(error.message ?? "Failed to release sync lock");
   }
 }
