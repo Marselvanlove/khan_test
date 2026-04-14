@@ -6,10 +6,17 @@ export function isMissingSupabaseColumnError(
     return false;
   }
 
+  const mentionsColumn =
+    error.message.includes(`'${column}'`) ||
+    error.message.includes(`"${column}"`) ||
+    error.message.includes(`${column}`);
+
   return (
-    error.code === "PGRST204" &&
-    (error.message.includes(`'${column}'`) ||
-      error.message.includes(`"${column}"`) ||
-      error.message.includes(`${column}`))
+    mentionsColumn &&
+    (
+      error.code === "PGRST204" ||
+      /column .* does not exist/i.test(error.message) ||
+      /could not find the .* column/i.test(error.message)
+    )
   );
 }
