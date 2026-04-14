@@ -46,6 +46,7 @@ export async function POST(
       retailcrmId: retailcrmIdNumber,
       targetStatusCode,
       requestHeaders: request.headers,
+      eventSource: body?.source?.trim() || "manager-action",
     });
 
     return NextResponse.json({

@@ -72,9 +72,23 @@ export function SummaryToggleSection({
             hint="Заказы без телефона и email. Это оперативный риск."
           />
           <StatCard
+            eyebrow="Без первой реакции"
+            value={String(ownerMetrics.ordersWithoutFirstTouch)}
+            hint="Активные заказы, по которым команда ещё не зафиксировала ни одного рабочего действия."
+          />
+          <StatCard
             eyebrow="Средний чек"
             value={formatCurrencyKzt(ownerMetrics.averageOrderValue)}
             hint="Качество корзины, а не только объём потока."
+          />
+          <StatCard
+            eyebrow="Median first touch"
+            value={
+              ownerMetrics.medianFirstTouchMinutes == null
+                ? "нет данных"
+                : `${ownerMetrics.medianFirstTouchMinutes} мин`
+            }
+            hint="Медианное время до первого рабочего касания по заказу."
           />
         </div>
       ) : null}

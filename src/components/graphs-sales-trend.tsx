@@ -127,6 +127,10 @@ function useCompactChart() {
   return compact;
 }
 
+function buildMobileChartWidth(points: GraphsTrendPoint[]) {
+  return Math.max(points.length * 96, 1100);
+}
+
 export function GraphsSalesTrend({
   points,
   orders,
@@ -168,8 +172,8 @@ export function GraphsSalesTrend({
     [chartData],
   );
   const mobileChartMinWidth = useMemo(
-    () => Math.max(chartData.length * 56, 680),
-    [chartData.length],
+    () => buildMobileChartWidth(chartData),
+    [chartData],
   );
   const { maxTick, ticks } = useMemo(
     () => buildRevenueTicks(points, highValueThreshold, isCompactChart),
@@ -276,9 +280,19 @@ export function GraphsSalesTrend({
                 На телефоне график можно листать вправо, чтобы увидеть весь период.
               </p>
             ) : null}
-            <div className="-mx-1 overflow-x-auto pb-2 touch-pan-x sm:mx-0 sm:overflow-visible">
+            <div
+              className="-mx-3 overflow-x-scroll pb-2 sm:mx-0 sm:overflow-visible"
+              style={
+                isCompactChart
+                  ? {
+                      WebkitOverflowScrolling: "touch",
+                      touchAction: "pan-x",
+                    }
+                  : undefined
+              }
+            >
               <div
-                className="pr-3 sm:pr-0"
+                className="pr-4 sm:pr-0"
                 style={isCompactChart ? { minWidth: `${mobileChartMinWidth}px` } : undefined}
               >
                 <ChartContainer config={chartConfig} className="min-h-[320px] w-full sm:min-h-[420px]">
@@ -290,13 +304,17 @@ export function GraphsSalesTrend({
                       left: isCompactChart ? 0 : 10,
                       bottom: 8,
                     }}
-                    onClick={(chartState) => {
-                      const point = getActivePointFromChartState(chartState);
+                    onClick={
+                      isCompactChart
+                        ? undefined
+                        : (chartState) => {
+                            const point = getActivePointFromChartState(chartState);
 
-                      if (point) {
-                        handleSelectDate(point.date);
-                      }
-                    }}
+                            if (point) {
+                              handleSelectDate(point.date);
+                            }
+                          }
+                    }
                   >
                     <CartesianGrid vertical={false} strokeDasharray="4 4" />
                     <XAxis
@@ -398,8 +416,8 @@ export function GraphsSalesTrend({
                           <Cell
                             key={point.date}
                             fill={getRevenueBarFill(point, selectedDate)}
-                            style={{ cursor: "pointer" }}
-                            onClick={() => handleSelectDate(point.date)}
+                            style={isCompactChart ? undefined : { cursor: "pointer" }}
+                            onClick={isCompactChart ? undefined : () => handleSelectDate(point.date)}
                           />
                         );
                       })}
@@ -415,8 +433,8 @@ export function GraphsSalesTrend({
                         <Cell
                           key={`${point.date}-orders`}
                           fill={getOrdersBarFill(point, selectedDate)}
-                          style={{ cursor: "pointer" }}
-                          onClick={() => handleSelectDate(point.date)}
+                          style={isCompactChart ? undefined : { cursor: "pointer" }}
+                          onClick={isCompactChart ? undefined : () => handleSelectDate(point.date)}
                         />
                       ))}
                     </Bar>

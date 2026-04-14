@@ -13,6 +13,8 @@ import {
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { resolveAppBaseUrl, loadOrderPresentation } from "@/lib/orders-server";
+import { recordServerOrderEvents } from "@/lib/order-events-server";
+import { buildOrderEvent } from "@/shared/order-events";
 import { buildSignedLogisticsLink, verifySignedManagerLink } from "@/shared/order-links";
 import {
   extractOrderAddress,
@@ -64,6 +66,15 @@ function readCustomFields(rawOrder: Record<string, unknown>) {
       key,
       value: typeof value === "string" ? value : JSON.stringify(value),
     }));
+}
+
+function buildDailyEventSuffix(date: Date, timeZone: string) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
 }
 
 function AccessDenied() {
@@ -132,6 +143,24 @@ export default async function OrderPage({
   const customFields = readCustomFields(rawOrder as Record<string, unknown>);
   const customerComment =
     typeof rawOrder.customerComment === "string" ? rawOrder.customerComment : null;
+  const openedAt = new Date().toISOString();
+
+  await recordServerOrderEvents([
+    buildOrderEvent({
+      eventKey: [
+        "manager-opened",
+        retailcrmIdNumber,
+        buildDailyEventSuffix(new Date(openedAt), adminSettings.timezone),
+      ].join(":"),
+      orderRetailCrmId: retailcrmIdNumber,
+      eventType: "manager-opened",
+      eventSource: "manager-page",
+      eventAt: openedAt,
+      payload: {
+        via: "signed-manager-link",
+      },
+    }),
+  ]);
 
   return (
     <main className="mx-auto flex min-h-screen max-w-[1180px] flex-col gap-6 px-4 py-8 md:px-6">
@@ -229,7 +258,10 @@ export default async function OrderPage({
             <p><strong>Статус:</strong> {order.status_label}</p>
             <p><strong>SLA:</strong> {order.sla_label}</p>
             <p><strong>Сегмент:</strong> {order.segment_label}</p>
-            <p><strong>Последний snapshot:</strong> {formatOrderDateTime(String(snapshotRow.updated_at ?? order.created_at), adminSettings.timezone)}</p>
+            <p><strong>Последний sync:</strong> {formatOrderDateTime(String(order.synced_at ?? snapshotRow.synced_at ?? order.created_at), adminSettings.timezone)}</p>
+            <p><strong>Последнее обновление в CRM:</strong> {formatOrderDateTime(String(snapshotRow.updated_at ?? order.created_at), adminSettings.timezone)}</p>
+            <p><strong>Reconciliation:</strong> {order.sync_state === "missing_in_retailcrm" ? "Нет в RetailCRM" : "Синхронно с RetailCRM"}</p>
+            <p><strong>Первая реакция:</strong> {order.first_touch_at ? formatOrderDateTime(order.first_touch_at, adminSettings.timezone) : "ещё не зафиксирована"}</p>
             <p><strong>Таймзона:</strong> {adminSettings.timezone}</p>
           </CardContent>
         </Card>

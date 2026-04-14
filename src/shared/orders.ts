@@ -157,6 +157,7 @@ export interface MockOrderMappingOptions {
 
 export interface NormalizeOrderOptions {
   utmFieldCode?: string;
+  syncedAt?: string;
 }
 
 function fallbackMockUtmSource(externalId: string | null | undefined): string | null {
@@ -330,6 +331,7 @@ export function normalizeRetailCrmOrder(
   const itemCount = calculateItemCount(order.items);
   const createdAt = parseRetailCrmDate(order.createdAt);
   const updatedAt = order.updatedAt ? parseRetailCrmDate(order.updatedAt) : createdAt;
+  const syncedAt = options.syncedAt ?? new Date().toISOString();
 
   return {
     retailcrm_id: order.id,
@@ -344,6 +346,9 @@ export function normalizeRetailCrmOrder(
     total_amount: totalAmount,
     created_at: createdAt,
     updated_at: updatedAt,
+    synced_at: syncedAt,
+    last_seen_in_retailcrm_at: syncedAt,
+    sync_state: "synced",
     raw_payload: order,
   };
 }
@@ -796,6 +801,9 @@ export function buildOperationalOrderRowFromRecord(
     managerUrl?: string | null;
     logisticsUrl?: string | null;
     statusLabels?: Record<string, string>;
+    firstTouchAt?: string | null;
+    firstTouchSource?: string | null;
+    firstTouchMinutes?: number | null;
   },
 ): OperationalOrderRow {
   const rawPayload = row.raw_payload as RetailCrmOrderResponse;
@@ -837,11 +845,14 @@ export function buildOperationalOrderRowFromRecord(
     status_group_label: statusMeta.groupLabel,
     segment_code: segment.code,
     segment_label: segment.label,
-    sla_label: getSlaLabel({
-      totalAmount,
-      statusCode,
-      missingContact,
-    }),
+    sla_label:
+      options.firstTouchMinutes != null
+        ? `Первая реакция за ${options.firstTouchMinutes} мин`
+        : getSlaLabel({
+            totalAmount,
+            statusCode,
+            missingContact,
+          }),
     retailcrm_url: buildRetailCrmOrderUrl(options.retailCrmBaseUrl, retailcrmId),
     manager_url: options.managerUrl ?? null,
     logistics_url: options.logisticsUrl ?? null,
@@ -857,6 +868,14 @@ export function buildOperationalOrderRowFromRecord(
     payment_paid_at: paymentMeta.payment_paid_at,
     has_payment_data: paymentMeta.has_payment_data,
     telegram_notified_at: row.telegram_notified_at ? String(row.telegram_notified_at) : null,
+    synced_at: row.synced_at ? String(row.synced_at) : null,
+    last_seen_in_retailcrm_at: row.last_seen_in_retailcrm_at
+      ? String(row.last_seen_in_retailcrm_at)
+      : null,
+    sync_state: row.sync_state === "missing_in_retailcrm" ? "missing_in_retailcrm" : "synced",
+    first_touch_at: options.firstTouchAt ?? null,
+    first_touch_source: options.firstTouchSource ?? null,
+    first_touch_minutes: options.firstTouchMinutes ?? null,
     alert_reasons: [],
   };
 }

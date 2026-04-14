@@ -5,6 +5,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { verifyLogisticsToken } from "@/shared/order-links";
+import { recordServerOrderEvents } from "@/lib/order-events-server";
+import { buildOrderEvent } from "@/shared/order-events";
 import {
   extractOrderAddress,
   extractOrderItemDetails,
@@ -34,6 +36,15 @@ function AccessDenied() {
       </Card>
     </main>
   );
+}
+
+function buildDailyEventSuffix(date: Date, timeZone: string) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
 }
 
 export default async function LogisticsOrderPage({
@@ -69,6 +80,24 @@ export default async function LogisticsOrderPage({
   const items = extractOrderItemDetails(rawOrder);
   const address = extractOrderAddress(rawOrder) ?? order.address;
   const phone = extractOrderPhone(rawOrder, order.phone);
+  const openedAt = new Date().toISOString();
+
+  await recordServerOrderEvents([
+    buildOrderEvent({
+      eventKey: [
+        "logistics-opened",
+        retailcrmIdNumber,
+        buildDailyEventSuffix(new Date(openedAt), adminSettings.timezone),
+      ].join(":"),
+      orderRetailCrmId: retailcrmIdNumber,
+      eventType: "logistics-opened",
+      eventSource: "logistics-page",
+      eventAt: openedAt,
+      payload: {
+        via: "signed-logistics-link",
+      },
+    }),
+  ]);
 
   return (
     <main className="mx-auto flex min-h-screen max-w-4xl flex-col gap-6 px-4 py-8 md:px-6">

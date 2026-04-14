@@ -11,11 +11,13 @@ import {
   editTelegramMessageText,
 } from "@/shared/telegram-api";
 import { handleTelegramCallbackUpdate } from "@/lib/telegram-workflow";
+import { recordServerOrderEvents } from "@/lib/order-events-server";
 import {
   loadOrderPresentation,
   resolveAppBaseUrl,
   updateOrderSnapshotAfterCompletion,
 } from "@/lib/orders-server";
+import { buildOrderEvent } from "@/shared/order-events";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import type { TelegramOrderContext } from "@/shared/types";
 
@@ -135,6 +137,24 @@ export async function POST(request: Request) {
         retailcrmId,
         rawOrder: nextOrder,
       });
+      const eventAt =
+        typeof nextOrder.updatedAt === "string" && nextOrder.updatedAt.trim()
+          ? nextOrder.updatedAt
+          : new Date().toISOString();
+
+      await recordServerOrderEvents([
+        buildOrderEvent({
+          eventKey: ["telegram-completed", retailcrmId, eventAt].join(":"),
+          orderRetailCrmId: retailcrmId,
+          eventType: "telegram-completed",
+          eventSource: "telegram",
+          eventAt,
+          payload: {
+            previous_status: typeof previousOrder.status === "string" ? previousOrder.status : null,
+            next_status: typeof nextOrder.status === "string" ? nextOrder.status : null,
+          },
+        }),
+      ]);
 
       const presentation = await loadOrderPresentation(retailcrmId, { baseUrl });
       const openUrl = linkSecret

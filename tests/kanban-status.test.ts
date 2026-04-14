@@ -197,6 +197,13 @@ test("status route updates order when transition is allowed", async () => {
       });
     }
 
+    if (url.includes("supabase.example.com/rest/v1/order_events")) {
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
     throw new Error(`Unexpected fetch: ${url}`);
   }) as typeof global.fetch;
 

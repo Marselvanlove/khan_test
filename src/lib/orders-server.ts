@@ -1,5 +1,7 @@
 import { createSupabaseServerClient } from "./supabase-server";
 import { DEFAULT_ADMIN_SETTINGS, isMissingSupabaseTableError, normalizeAdminSettings } from "@/shared/admin-settings";
+import { buildOperationalTouchIndex } from "@/shared/order-events";
+import { loadOrderEvents } from "@/shared/order-event-store";
 import { buildSignedManagerLink } from "@/shared/order-links";
 import {
   buildOperationalOrderRowFromRecord,
@@ -89,7 +91,7 @@ export async function loadOrderSnapshotByRetailCrmId(retailcrmId: number) {
 
   const { data, error } = await supabase
     .from("orders")
-    .select("retailcrm_id, external_id, customer_name, phone, email, city, total_amount, created_at, updated_at, status, utm_source, telegram_notified_at, raw_payload")
+    .select("retailcrm_id, external_id, customer_name, phone, email, city, total_amount, created_at, updated_at, synced_at, last_seen_in_retailcrm_at, sync_state, status, utm_source, telegram_notified_at, raw_payload")
     .eq("retailcrm_id", retailcrmId)
     .maybeSingle();
 
@@ -143,6 +145,24 @@ export async function loadOrderPresentation(
     loadServerAdminSettings(),
     loadLiveRetailCrmOrder(retailcrmId),
   ]);
+  const supabase = createSupabaseServerClient();
+  const eventsResult = supabase
+    ? await loadOrderEvents(supabase as never, {
+        orderIds: [retailcrmId],
+      }).catch(() => ({
+        available: false,
+        rows: [],
+      }))
+    : { available: false, rows: [] };
+  const touchState = buildOperationalTouchIndex(
+    [
+      {
+        retailcrm_id: retailcrmId,
+        created_at: String(snapshotRow.created_at),
+      },
+    ],
+    eventsResult.rows,
+  ).get(retailcrmId);
   const linkSigningSecret = process.env.LINK_SIGNING_SECRET?.trim();
   const retailCrmBaseUrl = process.env.RETAILCRM_BASE_URL?.trim() ?? null;
   const managerUrl = linkSigningSecret
@@ -161,6 +181,9 @@ export async function loadOrderPresentation(
       order: buildOperationalOrderRowFromRecord(snapshotRow, {
         retailCrmBaseUrl,
         managerUrl,
+        firstTouchAt: touchState?.first_touch_at ?? null,
+        firstTouchSource: touchState?.first_touch_source ?? null,
+        firstTouchMinutes: touchState?.first_touch_minutes ?? null,
       }),
       rawOrder: snapshotRow.raw_payload,
       snapshotRow,
@@ -174,6 +197,9 @@ export async function loadOrderPresentation(
   const mergedRow: Record<string, unknown> = {
     ...normalizedLive,
     telegram_notified_at: snapshotRow.telegram_notified_at ?? null,
+    synced_at: new Date().toISOString(),
+    last_seen_in_retailcrm_at: new Date().toISOString(),
+    sync_state: "synced",
     raw_payload: liveOrder,
   };
 
@@ -182,6 +208,9 @@ export async function loadOrderPresentation(
     order: buildOperationalOrderRowFromRecord(mergedRow, {
       retailCrmBaseUrl,
       managerUrl,
+      firstTouchAt: touchState?.first_touch_at ?? null,
+      firstTouchSource: touchState?.first_touch_source ?? null,
+      firstTouchMinutes: touchState?.first_touch_minutes ?? null,
     }),
     rawOrder: liveOrder,
     snapshotRow,
@@ -201,6 +230,7 @@ export async function updateOrderSnapshotAfterCompletion(params: {
 
   const normalized = normalizeRetailCrmOrder(params.rawOrder, {
     utmFieldCode: process.env.RETAILCRM_UTM_FIELD_CODE?.trim(),
+    syncedAt: new Date().toISOString(),
   });
   const { error } = await supabase
     .from("orders")
@@ -214,7 +244,10 @@ export async function updateOrderSnapshotAfterCompletion(params: {
       item_count: normalized.item_count,
       total_amount: normalized.total_amount,
       created_at: normalized.created_at,
-      updated_at: new Date().toISOString(),
+      updated_at: normalized.updated_at,
+      synced_at: normalized.synced_at,
+      last_seen_in_retailcrm_at: normalized.last_seen_in_retailcrm_at,
+      sync_state: "synced",
       raw_payload: params.rawOrder,
     })
     .eq("retailcrm_id", params.retailcrmId);

@@ -9,6 +9,8 @@ import {
 import { createRetailCrmClient } from "@/shared/retailcrm";
 import type { KanbanStatusOption, RetailCrmOrderResponse } from "@/shared/types";
 import { resolveAppBaseUrl, updateOrderSnapshotFromRetailCrm } from "@/lib/orders-server";
+import { recordServerOrderEvents } from "@/lib/order-events-server";
+import { buildOrderEvent } from "@/shared/order-events";
 import { buildSignedLogisticsLink, buildSignedManagerLink } from "@/shared/order-links";
 
 const RETAILCRM_STATUSES_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -131,6 +133,8 @@ export async function updateOrderStatusByCode(params: {
   retailcrmId: number;
   targetStatusCode: string;
   requestHeaders: Headers;
+  eventSource?: string;
+  actorLabel?: string | null;
 }) {
   const retailCrm = createRetailCrmRuntimeClient();
   const statusOptions = await loadRetailCrmKanbanStatuses({ strict: true });
@@ -194,6 +198,30 @@ export async function updateOrderStatusByCode(params: {
     (await retailCrm.getOrder(params.retailcrmId, {
       by: "id",
     }));
+  const eventAt =
+    typeof rawOrder.updatedAt === "string" && rawOrder.updatedAt.trim()
+      ? rawOrder.updatedAt
+      : new Date().toISOString();
+
+  await recordServerOrderEvents([
+    buildOrderEvent({
+      eventKey: [
+        "status-updated",
+        params.retailcrmId,
+        params.targetStatusCode,
+        eventAt,
+      ].join(":"),
+      orderRetailCrmId: params.retailcrmId,
+      eventType: "status-updated",
+      eventSource: params.eventSource ?? "manager-action",
+      eventAt,
+      actorLabel: params.actorLabel ?? null,
+      payload: {
+        previous_status: currentStatusCode,
+        next_status: params.targetStatusCode,
+      },
+    }),
+  ]);
 
   return {
     changed: true,

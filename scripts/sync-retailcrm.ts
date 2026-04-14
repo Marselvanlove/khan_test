@@ -9,9 +9,17 @@ import {
   isNotificationWindowOpen,
   normalizeAdminSettings,
 } from "../src/shared/admin-settings";
+import {
+  buildMissingInRetailCrmEvent,
+  buildNotificationSentEvent,
+  buildRetailCrmSnapshotEvents,
+  normalizeOrderSnapshot,
+} from "../src/shared/order-events";
+import { upsertOrderEvents } from "../src/shared/order-event-store";
 import { buildSignedManagerLink } from "../src/shared/order-links";
 import { normalizeRetailCrmOrder, getStatusMeta } from "../src/shared/orders";
 import { createRetailCrmClient } from "../src/shared/retailcrm";
+import { createSyncRun, finishSyncRun } from "../src/shared/sync-runs";
 import {
   attachTelegramMessageId,
   createTelegramMessageState,
@@ -45,6 +53,7 @@ import type {
 
 const TELEGRAM_MAX_ATTEMPTS = 5;
 let notificationLogAvailable = true;
+let syncRunsAvailable = true;
 
 function isMissingNotificationLogColumn(
   error: { message?: string | null; code?: string | null } | null | undefined,
@@ -104,6 +113,55 @@ function chunk<T>(items: T[], size: number): T[][] {
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function safeCreateSyncRun(
+  supabase: ReturnType<typeof createSupabaseAdmin>,
+  source: string,
+) {
+  if (!syncRunsAvailable) {
+    return null;
+  }
+
+  try {
+    return await createSyncRun(supabase as never, {
+      source,
+    });
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message.includes("sync_runs") || error.message.includes("Could not find the table"))
+    ) {
+      syncRunsAvailable = false;
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+async function safeFinishSyncRun(
+  supabase: ReturnType<typeof createSupabaseAdmin>,
+  runId: string | null,
+  payload: Parameters<typeof finishSyncRun>[2],
+) {
+  if (!runId || !syncRunsAvailable) {
+    return;
+  }
+
+  try {
+    await finishSyncRun(supabase as never, runId, payload);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message.includes("sync_runs") || error.message.includes("Could not find the table"))
+    ) {
+      syncRunsAvailable = false;
+      return;
+    }
+
+    throw error;
+  }
 }
 
 async function waitForTelegramSendSlot(throttle: TelegramSendThrottle) {
@@ -239,6 +297,14 @@ async function sendTelegramMessageWithRetry(
         payload_preview: messageText,
         delivered_at: new Date().toISOString(),
       });
+      await upsertOrderEvents(supabase as never, [
+        buildNotificationSentEvent({
+          retailcrmId: payload.retailcrm_id,
+          eventAt: new Date().toISOString(),
+          stateId: messageState.id,
+          alertTypes: payload.alert_types,
+        }),
+      ]);
       scheduleTelegramSend(throttle, TELEGRAM_MIN_INTERVAL_MS);
 
       return;
@@ -289,10 +355,64 @@ async function sendTelegramMessageWithRetry(
   }
 }
 
-async function upsertOrders(records: OrderRecordInput[]) {
-  const supabase = createSupabaseAdmin();
+async function loadExistingOrderSnapshots(
+  supabase: ReturnType<typeof createSupabaseAdmin>,
+) {
+  const { data, error } = await supabase
+    .from("orders")
+    .select("retailcrm_id, external_id, status, total_amount, utm_source, updated_at, sync_state");
 
-  for (const group of chunk(records, 200)) {
+  if (error) {
+    throw error;
+  }
+
+  return new Map(
+    (data ?? []).map((row) => {
+      const normalized = normalizeOrderSnapshot(row as Record<string, unknown>);
+
+      return [normalized.retailcrm_id, normalized];
+    }),
+  );
+}
+
+async function upsertOrders(params: {
+  records: OrderRecordInput[];
+  syncedAt: string;
+  runSource: string;
+  externalIdFilter?: string | null;
+}) {
+  const supabase = createSupabaseAdmin();
+  const existingSnapshots = await loadExistingOrderSnapshots(supabase);
+  const nextIds = new Set(params.records.map((record) => record.retailcrm_id));
+  const nextRows = params.records.map((record) => ({
+    ...record,
+    synced_at: params.syncedAt,
+    last_seen_in_retailcrm_at: params.syncedAt,
+    sync_state: "synced" as const,
+  }));
+  const snapshotEvents = nextRows.flatMap((record) =>
+    buildRetailCrmSnapshotEvents({
+      previous: existingSnapshots.get(record.retailcrm_id) ?? null,
+      next: record,
+      eventSource: params.runSource,
+    }),
+  );
+  const createdCount = nextRows.filter((record) => !existingSnapshots.has(record.retailcrm_id)).length;
+  const changedCount = nextRows.filter((record) => {
+    const previous = existingSnapshots.get(record.retailcrm_id);
+
+    if (!previous) {
+      return false;
+    }
+
+    return buildRetailCrmSnapshotEvents({
+      previous,
+      next: record,
+      eventSource: params.runSource,
+    }).length > 0;
+  }).length;
+
+  for (const group of chunk(nextRows, 200)) {
     const { error } = await supabase.from("orders").upsert(group, {
       onConflict: "retailcrm_id",
     });
@@ -301,6 +421,45 @@ async function upsertOrders(records: OrderRecordInput[]) {
       throw error;
     }
   }
+
+  const missingRows =
+    params.externalIdFilter
+      ? []
+      : Array.from(existingSnapshots.values()).filter((row) => !nextIds.has(row.retailcrm_id));
+  const newlyMissingRows = missingRows.filter((row) => row.sync_state !== "missing_in_retailcrm");
+
+  if (newlyMissingRows.length) {
+    const { error } = await supabase
+      .from("orders")
+      .update({
+        sync_state: "missing_in_retailcrm",
+      })
+      .in(
+        "retailcrm_id",
+        newlyMissingRows.map((row) => row.retailcrm_id),
+      );
+
+    if (error) {
+      throw error;
+    }
+  }
+
+  const missingEvents = newlyMissingRows.map((row) =>
+    buildMissingInRetailCrmEvent({
+      retailcrmId: row.retailcrm_id,
+      externalId: row.external_id,
+      eventSource: params.runSource,
+      eventAt: params.syncedAt,
+    }),
+  );
+
+  await upsertOrderEvents(supabase as never, [...snapshotEvents, ...missingEvents]);
+
+  return {
+    createdCount,
+    changedCount,
+    missingInRetailCrmCount: missingRows.length,
+  };
 }
 
 async function loadAdminSettings(supabase: ReturnType<typeof createSupabaseAdmin>): Promise<AdminSettings> {
@@ -465,11 +624,17 @@ async function main() {
   const externalIdFilter = readCliOption("external-id")?.trim() || null;
   const supabase = createSupabaseAdmin();
   const lockAcquired = await acquireRetailCrmSyncLock(supabase);
+  const syncedAt = new Date().toISOString();
 
   if (!lockAcquired) {
     console.log("RetailCRM sync already running, skip this execution.");
     return;
   }
+
+  const syncRun = await safeCreateSyncRun(
+    supabase,
+    externalIdFilter ? "retailcrm-poll-single-order" : "retailcrm-poll",
+  );
 
   try {
     const retailCrm = createRetailCrmClient({
@@ -491,14 +656,47 @@ async function main() {
         });
 
     const records = orders.map((order) =>
-      normalizeRetailCrmOrder(order, { utmFieldCode: process.env.RETAILCRM_UTM_FIELD_CODE }),
+      normalizeRetailCrmOrder(order, {
+        utmFieldCode: process.env.RETAILCRM_UTM_FIELD_CODE,
+        syncedAt,
+      }),
     );
-
-    await upsertOrders(records);
+    const syncStats = await upsertOrders({
+      records,
+      syncedAt,
+      runSource: externalIdFilter ? "retailcrm-poll-single-order" : "retailcrm-poll",
+      externalIdFilter,
+    });
     const notified = await sendTelegramNotifications(externalIdFilter);
+
+    await safeFinishSyncRun(supabase, syncRun?.id ?? null, {
+      status: "completed",
+      finished_at: new Date().toISOString(),
+      fetched_orders_count: orders.length,
+      upserted_orders_count: records.length,
+      created_orders_count: syncStats.createdCount,
+      changed_orders_count: syncStats.changedCount,
+      missing_in_retailcrm_count: syncStats.missingInRetailCrmCount,
+      notification_events_count: notified,
+      error_message: null,
+      metadata: {
+        external_id_filter: externalIdFilter,
+      },
+    });
 
     console.log(`Synced orders: ${records.length}`);
     console.log(`Telegram notifications sent: ${notified}`);
+    console.log(`Created snapshots: ${syncStats.createdCount}`);
+    console.log(`Changed snapshots: ${syncStats.changedCount}`);
+    console.log(`Missing in RetailCRM: ${syncStats.missingInRetailCrmCount}`);
+  } catch (error) {
+    await safeFinishSyncRun(supabase, syncRun?.id ?? null, {
+      status: "failed",
+      finished_at: new Date().toISOString(),
+      error_message: error instanceof Error ? error.message : "Unknown error",
+    });
+
+    throw error;
   } finally {
     await releaseRetailCrmSyncLock(supabase).catch((error) => {
       console.error("Failed to release sync lock:", error);

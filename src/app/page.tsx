@@ -45,6 +45,8 @@ export default async function HomePage() {
           financeData={data.financeData}
           notificationOverview={data.notificationOverview}
           notificationLogs={data.notificationLogs}
+          orderEvents={data.orderEvents}
+          syncHealth={data.syncHealth}
         />
       )}
     </main>

@@ -172,6 +172,9 @@ export interface OrderRecordInput {
   total_amount: number;
   created_at: string;
   updated_at: string;
+  synced_at: string;
+  last_seen_in_retailcrm_at: string;
+  sync_state: "synced" | "missing_in_retailcrm";
   raw_payload: RetailCrmOrderResponse;
 }
 
@@ -251,6 +254,10 @@ export interface OwnerMetrics {
   deliveryInFlight: number;
   pendingAlerts: number;
   pendingOrders: number;
+  ordersWithoutFirstTouch: number;
+  medianFirstTouchMinutes: number | null;
+  missingInRetailCrm: number;
+  lastSuccessfulSyncAt: string | null;
 }
 
 export interface NotificationOverview {
@@ -259,6 +266,54 @@ export interface NotificationOverview {
   pendingEvents: number;
   pendingOrders: number;
   scheduleLabel: string;
+}
+
+export type OrderEventType =
+  | "snapshot-created"
+  | "status-changed"
+  | "amount-changed"
+  | "source-changed"
+  | "missing-in-retailcrm"
+  | "restored-in-retailcrm"
+  | "notification-sent"
+  | "manager-opened"
+  | "logistics-opened"
+  | "status-updated"
+  | "telegram-completed";
+
+export interface OrderEventItem {
+  id: string;
+  event_key: string;
+  order_retailcrm_id: number;
+  event_type: OrderEventType;
+  event_source: string;
+  event_at: string;
+  actor_label: string | null;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface SyncRunItem {
+  id: string;
+  source: string;
+  status: "running" | "completed" | "failed";
+  started_at: string;
+  finished_at: string | null;
+  fetched_orders_count: number;
+  upserted_orders_count: number;
+  created_orders_count: number;
+  changed_orders_count: number;
+  missing_in_retailcrm_count: number;
+  notification_events_count: number;
+  error_message: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface SyncHealthOverview {
+  latestRun: SyncRunItem | null;
+  syncedOrders: number;
+  missingInRetailCrm: number;
+  ordersWithoutFirstTouch: number;
 }
 
 export interface SourceMetric {
@@ -385,6 +440,12 @@ export interface OperationalOrderRow {
   payment_paid_at: string | null;
   has_payment_data: boolean;
   telegram_notified_at: string | null;
+  synced_at: string | null;
+  last_seen_in_retailcrm_at: string | null;
+  sync_state: "synced" | "missing_in_retailcrm";
+  first_touch_at: string | null;
+  first_touch_source: string | null;
+  first_touch_minutes: number | null;
   alert_reasons: string[];
 }
 
@@ -394,6 +455,7 @@ export interface OperationsKpiItem {
     | "approval-backlog"
     | "delivery"
     | "missing-contact"
+    | "no-first-touch"
     | "high-value-active"
     | "sla-overdue";
   label: string;

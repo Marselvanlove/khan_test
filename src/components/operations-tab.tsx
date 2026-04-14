@@ -30,6 +30,7 @@ const FILTER_LABELS: Record<OperationsKpiItem["key"], string> = {
   "approval-backlog": "Согласование",
   delivery: "В доставке",
   "missing-contact": "Без контакта",
+  "no-first-touch": "Без первой реакции",
   "high-value-active": "High-value в работе",
   "sla-overdue": "SLA просрочен",
 };
@@ -60,6 +61,12 @@ function matchesMetric(
       return order.status_group === "delivery";
     case "missing-contact":
       return order.missing_contact;
+    case "no-first-touch":
+      return (
+        order.status_group !== "complete" &&
+        order.status_group !== "cancel" &&
+        !order.first_touch_at
+      );
     case "high-value-active":
       return (
         order.total_amount > highValueThreshold &&

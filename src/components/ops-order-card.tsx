@@ -176,6 +176,11 @@ export function OpsOrderCard({
                     <Badge variant="outline" className="max-w-full break-words whitespace-normal">
                       {order.status_label}
                     </Badge>
+                    {order.sync_state === "missing_in_retailcrm" ? (
+                      <Badge variant="destructive" className="max-w-full break-words whitespace-normal">
+                        Нет в RetailCRM
+                      </Badge>
+                    ) : null}
                     {order.alert_reasons.slice(0, 2).map((reason) => (
                       <Badge
                         key={`${order.crm_number}-${reason}`}
@@ -256,6 +261,18 @@ export function OpsOrderCard({
                   <AddressMapChooser address={order.address} city={order.city} compact />
                 </div>
                 <p><strong>Дата:</strong> {formatOrderDateTime(order.created_at)}</p>
+                <p>
+                  <strong>Первая реакция:</strong>{" "}
+                  {order.first_touch_at
+                    ? `${formatOrderDateTime(order.first_touch_at)}${
+                        order.first_touch_minutes == null ? "" : ` (${order.first_touch_minutes} мин)`
+                      }`
+                    : "ещё не зафиксирована"}
+                </p>
+                <p>
+                  <strong>Sync:</strong>{" "}
+                  {order.sync_state === "missing_in_retailcrm" ? "нет в RetailCRM" : "synced"}
+                </p>
               </div>
 
               <Separator />

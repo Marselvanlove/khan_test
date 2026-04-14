@@ -22,6 +22,7 @@ import type {
   MarketingTabData,
   NotificationLogItem,
   NotificationOverview,
+  OrderEventItem,
   OperationsTabData,
   OperationalOrderRow,
   OwnerMetrics,
@@ -29,6 +30,7 @@ import type {
   SourceMetric,
   NotificationAlertType,
   PaymentStatus,
+  SyncHealthOverview,
 } from "@/shared/types";
 import {
   buildOperationalOrderRowFromRecord,
@@ -39,9 +41,15 @@ import {
   summarizeMetrics,
   PREMIUM_EXPRESS_THRESHOLD,
 } from "@/shared/orders";
+import {
+  buildOperationalTouchIndex,
+  calculateMedianFirstTouchMinutes,
+} from "@/shared/order-events";
+import { loadOrderEvents } from "@/shared/order-event-store";
 import { buildKanbanStatusLabelMap } from "@/shared/kanban";
 import { buildNotificationLogFeed } from "@/shared/notification-logs";
 import { buildSignedLogisticsLink, buildSignedManagerLink } from "@/shared/order-links";
+import { loadLatestSyncRun } from "@/shared/sync-runs";
 import {
   buildNotificationEventKey,
   DEFAULT_ADMIN_SETTINGS,
@@ -66,6 +74,8 @@ interface DashboardDataSuccess {
   marketingData: MarketingTabData;
   financeData: FinanceTabData;
   notificationLogs: NotificationLogItem[];
+  orderEvents: OrderEventItem[];
+  syncHealth: SyncHealthOverview;
 }
 
 interface DashboardDataFailure {
@@ -112,6 +122,7 @@ function buildSentAlertSet(logs: NotificationLogItem[]): Set<string> {
 function buildOwnerMetrics(
   orders: OperationalOrderRow[],
   pendingNotificationOrders: OperationalOrderRow[],
+  lastSuccessfulSyncAt: string | null,
 ): OwnerMetrics {
   const last24HoursBoundary = Date.now() - 24 * 60 * 60 * 1000;
   const totalRevenue = orders.reduce((sum, order) => sum + order.total_amount, 0);
@@ -124,6 +135,17 @@ function buildOwnerMetrics(
     (sum, order) => sum + order.alert_reasons.length,
     0,
   );
+  const ordersWithoutFirstTouch = orders.filter(
+    (order) => isOperationallyActive(order) && !order.first_touch_at,
+  ).length;
+  const medianFirstTouchMinutes = calculateMedianFirstTouchMinutes(
+    orders.map((order) => ({
+      first_touch_at: order.first_touch_at,
+      first_touch_source: order.first_touch_source,
+      first_touch_minutes: order.first_touch_minutes,
+    })),
+  );
+  const missingInRetailCrm = orders.filter((order) => order.sync_state === "missing_in_retailcrm").length;
 
   return {
     averageOrderValue: orders.length ? totalRevenue / orders.length : 0,
@@ -135,6 +157,23 @@ function buildOwnerMetrics(
     deliveryInFlight,
     pendingAlerts,
     pendingOrders: pendingNotificationOrders.length,
+    ordersWithoutFirstTouch,
+    medianFirstTouchMinutes,
+    missingInRetailCrm,
+    lastSuccessfulSyncAt,
+  };
+}
+
+function buildSyncHealthOverview(
+  orders: OperationalOrderRow[],
+  ownerMetrics: OwnerMetrics,
+  latestRun: SyncHealthOverview["latestRun"],
+): SyncHealthOverview {
+  return {
+    latestRun,
+    syncedOrders: orders.filter((order) => order.sync_state === "synced").length,
+    missingInRetailCrm: ownerMetrics.missingInRetailCrm,
+    ordersWithoutFirstTouch: ownerMetrics.ordersWithoutFirstTouch,
   };
 }
 
@@ -293,7 +332,15 @@ function isSlaOverdue(order: OperationalOrderRow, now = Date.now()): boolean {
     return false;
   }
 
+  if (order.first_touch_minutes != null) {
+    return order.first_touch_minutes * 60 * 1000 > deadline;
+  }
+
   return now - Date.parse(order.created_at) > deadline;
+}
+
+function isAwaitingFirstTouch(order: OperationalOrderRow) {
+  return isOperationallyActive(order) && !order.first_touch_at;
 }
 
 function dedupeReasons(reasons: string[]): string[] {
@@ -335,6 +382,7 @@ function buildOperationsTabData(
       alert_reasons: dedupeReasons([
         order.segment_label,
         ...(pendingByOrderId.get(order.retailcrm_id) ?? []),
+        ...(isAwaitingFirstTouch(order) ? ["Нет первой реакции"] : []),
         ...(isSlaOverdue(order) ? ["SLA просрочен"] : []),
       ]),
     }))
@@ -354,6 +402,7 @@ function buildOperationsTabData(
         order.status_group === "new" ? "Новый заказ" : "",
         order.status_group === "approval" ? "Ждёт согласования" : "",
         ...(pendingByOrderId.get(order.retailcrm_id) ?? []),
+        ...(isAwaitingFirstTouch(order) ? ["Нет первой реакции"] : []),
         ...(isSlaOverdue(order) ? ["SLA просрочен"] : []),
       ]),
     }))
@@ -365,6 +414,7 @@ function buildOperationsTabData(
         order.missing_contact ||
         !order.address?.trim() ||
         !order.items.length ||
+        order.sync_state === "missing_in_retailcrm" ||
         pendingByOrderId.has(order.retailcrm_id),
     )
     .map((order) => ({
@@ -373,6 +423,7 @@ function buildOperationsTabData(
         order.missing_contact ? "Нет телефона или email" : "",
         !order.address?.trim() ? "Нет адреса" : "",
         !order.items.length ? "Ошибка данных" : "",
+        order.sync_state === "missing_in_retailcrm" ? "Snapshot выпал из RetailCRM" : "",
         pendingByOrderId.has(order.retailcrm_id) ? "Не отправлено уведомление" : "",
       ]),
     }))
@@ -416,6 +467,12 @@ function buildOperationsTabData(
         label: "Без контакта",
         value: orders.filter((order) => order.missing_contact).length,
         hint: "Клиенту нельзя быстро написать или позвонить без ручной правки данных.",
+      },
+      {
+        key: "no-first-touch",
+        label: "Без первой реакции",
+        value: orders.filter((order) => isAwaitingFirstTouch(order)).length,
+        hint: "Активные заказы, по которым ещё не зафиксировано ни одного рабочего действия.",
       },
       {
         key: "high-value-active",
@@ -838,12 +895,12 @@ export async function getDashboardData(): Promise<DashboardData> {
   const linkSigningSecret = process.env.LINK_SIGNING_SECRET?.trim() ?? null;
   const appBaseUrl = process.env.APP_BASE_URL?.trim() ?? null;
 
-  const [metricsResult, allOrdersResult, notificationLogsResult, adminSettingsResult, kanbanStatuses] =
+  const [metricsResult, allOrdersResult, notificationLogsResult, adminSettingsResult, kanbanStatuses, latestSyncRunResult] =
     await Promise.all([
       supabase.from("daily_order_metrics").select("*").order("order_date", { ascending: true }),
       supabase
         .from("orders")
-        .select("retailcrm_id, external_id, customer_name, phone, email, city, total_amount, created_at, status, utm_source, telegram_notified_at, raw_payload")
+        .select("retailcrm_id, external_id, customer_name, phone, email, city, total_amount, created_at, updated_at, synced_at, last_seen_in_retailcrm_at, sync_state, status, utm_source, telegram_notified_at, raw_payload")
         .order("created_at", { ascending: false }),
     supabase
       .from("notification_logs")
@@ -858,6 +915,10 @@ export async function getDashboardData(): Promise<DashboardData> {
         .eq("singleton_key", "default")
         .maybeSingle(),
       loadRetailCrmKanbanStatuses(),
+      loadLatestSyncRun(supabase as never).catch(() => ({
+        available: false,
+        run: null,
+      })),
     ]);
 
   const logsMissingTable = isMissingSupabaseTableError(notificationLogsResult.error);
@@ -886,9 +947,26 @@ export async function getDashboardData(): Promise<DashboardData> {
       : normalizeAdminSettings(adminSettingsResult.data as Record<string, unknown>);
   const metrics = (metricsResult.data ?? []).map((metric) => normalizeMetric(metric as Record<string, unknown>));
   const statusLabels = buildKanbanStatusLabelMap(kanbanStatuses);
+  const orderRows = (allOrdersResult.data ?? []) as Array<Record<string, unknown>>;
+  const orderIds = orderRows.map((row) => Number(row.retailcrm_id));
+  const orderEventsResult = await loadOrderEvents(supabase as never, {
+    orderIds,
+  }).catch(() => ({
+    available: false,
+    rows: [] as OrderEventItem[],
+  }));
+  const allOrderEvents = orderEventsResult.rows;
+  const touchIndex = buildOperationalTouchIndex(
+    orderRows.map((row) => ({
+      retailcrm_id: Number(row.retailcrm_id),
+      created_at: String(row.created_at),
+    })),
+    allOrderEvents,
+  );
   const allOrders = await Promise.all(
-    (allOrdersResult.data ?? []).map(async (row) => {
+    orderRows.map(async (row) => {
       const retailcrmId = Number((row as Record<string, unknown>).retailcrm_id);
+      const firstTouch = touchIndex.get(retailcrmId);
       const managerUrl = linkSigningSecret
         ? (
             await buildSignedManagerLink({
@@ -912,6 +990,9 @@ export async function getDashboardData(): Promise<DashboardData> {
         managerUrl,
         logisticsUrl,
         statusLabels,
+        firstTouchAt: firstTouch?.first_touch_at ?? null,
+        firstTouchSource: firstTouch?.first_touch_source ?? null,
+        firstTouchMinutes: firstTouch?.first_touch_minutes ?? null,
       });
     }),
   );
@@ -976,7 +1057,9 @@ export async function getDashboardData(): Promise<DashboardData> {
     })),
   );
   const notificationLogs = buildNotificationLogFeed(allNotificationLogs, 8);
-  const ownerMetrics = buildOwnerMetrics(allOrders, pendingNotificationOrders);
+  const lastSuccessfulSyncAt =
+    latestSyncRunResult.run?.status === "completed" ? latestSyncRunResult.run.finished_at : null;
+  const ownerMetrics = buildOwnerMetrics(allOrders, pendingNotificationOrders, lastSuccessfulSyncAt);
   const summary = summarizeMetrics(allOrders, adminSettings.high_value_threshold);
   const reportPeriodLabel = buildGraphsPeriodLabel(metrics);
   const graphsData: GraphsData = {
@@ -1008,6 +1091,11 @@ export async function getDashboardData(): Promise<DashboardData> {
   );
   const marketingData = buildMarketingTabData(allOrders, reportPeriodLabel);
   const financeData = buildFinanceTabData(allOrders, reportPeriodLabel);
+  const syncHealth = buildSyncHealthOverview(
+    allOrders,
+    ownerMetrics,
+    latestSyncRunResult.run,
+  );
   const notificationOverview: NotificationOverview = {
     windowOpen: isNotificationWindowOpen(adminSettings),
     activeAlerts: getEnabledAlertTypes(adminSettings),
@@ -1028,5 +1116,7 @@ export async function getDashboardData(): Promise<DashboardData> {
     marketingData,
     financeData,
     notificationLogs,
+    orderEvents: allOrderEvents.slice(0, 12),
+    syncHealth,
   };
 }

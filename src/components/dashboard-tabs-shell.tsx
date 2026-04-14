@@ -35,9 +35,11 @@ import type {
   MarketingTabData,
   NotificationLogItem,
   NotificationOverview,
+  OrderEventItem,
   OperationsTabData,
   OperationalOrderRow,
   OwnerMetrics,
+  SyncHealthOverview,
 } from "@/shared/types";
 
 type DashboardTabValue = "graphs" | "operations" | "marketing" | "finance" | "system";
@@ -66,6 +68,8 @@ interface DashboardTabsShellProps {
   financeData: FinanceTabData;
   notificationOverview: NotificationOverview;
   notificationLogs: NotificationLogItem[];
+  orderEvents: OrderEventItem[];
+  syncHealth: SyncHealthOverview;
 }
 
 export function DashboardTabsShell({
@@ -80,6 +84,8 @@ export function DashboardTabsShell({
   financeData,
   notificationOverview,
   notificationLogs,
+  orderEvents,
+  syncHealth,
 }: DashboardTabsShellProps) {
   const [activeTab, setActiveTab] = useState<DashboardTabValue>("graphs");
   const [menuOpen, setMenuOpen] = useState(false);
@@ -106,22 +112,26 @@ export function DashboardTabsShell({
       />
 
       <Tabs value={activeTab} onValueChange={(value) => handleTabChange(value as DashboardTabValue)} className="gap-6">
-        <Card className="sticky top-3 z-20 border-border/70 bg-card/85 shadow-sm backdrop-blur supports-[backdrop-filter]:backdrop-blur-md">
-          <CardContent className="flex flex-col gap-4 py-4">
+        <Card className="sticky top-3 z-20 border-border/70 bg-card/85 py-3 shadow-sm backdrop-blur supports-[backdrop-filter]:backdrop-blur-md md:py-6">
+          <CardContent className="flex flex-col gap-3 py-0 md:gap-4 md:py-4">
             <Separator className="hidden md:block" />
 
             <div className="flex items-center justify-between gap-3 md:hidden">
-              <div className="min-w-0">
-                <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-primary">Раздел</p>
-                <div className="mt-1 flex items-center gap-2">
-                  <ActiveTabIcon className="size-4 text-primary" />
-                  <p className="truncate text-base font-semibold text-foreground">{activeTabItem.label}</p>
+              <div className="flex min-w-0 items-center gap-2.5">
+                <div className="flex size-9 shrink-0 items-center justify-center rounded-full border border-primary/15 bg-primary/8 text-primary">
+                  <ActiveTabIcon className="size-4" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-primary/75">
+                    Раздел
+                  </p>
+                  <p className="truncate text-sm font-semibold text-foreground">{activeTabItem.label}</p>
                 </div>
               </div>
               <Button
                 type="button"
                 variant="outline"
-                className="shrink-0 rounded-full border-border/70 bg-background/80"
+                className="h-10 shrink-0 rounded-full border-border/70 bg-background/80 px-4"
                 onClick={() => setMenuOpen(true)}
               >
                 <MenuIcon className="size-4" />
@@ -176,6 +186,8 @@ export function DashboardTabsShell({
             settings={adminSettings}
             overview={notificationOverview}
             notificationLogs={notificationLogs}
+            orderEvents={orderEvents}
+            syncHealth={syncHealth}
           />
         </TabsContent>
       </Tabs>
