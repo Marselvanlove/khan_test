@@ -45,6 +45,7 @@ function ChartContainer({
   children,
   config,
   initialDimension = INITIAL_DIMENSION,
+  responsive = true,
   ...props
 }: React.ComponentProps<"div"> & {
   config: ChartConfig
@@ -55,6 +56,7 @@ function ChartContainer({
     width: number
     height: number
   }
+  responsive?: boolean
 }) {
   const uniqueId = React.useId()
   const chartId = `chart-${id ?? uniqueId.replace(/:/g, "")}`
@@ -71,11 +73,22 @@ function ChartContainer({
         {...props}
       >
         <ChartStyle id={chartId} config={config} />
-        <RechartsPrimitive.ResponsiveContainer
-          initialDimension={initialDimension}
-        >
-          {children}
-        </RechartsPrimitive.ResponsiveContainer>
+        {responsive ? (
+          <RechartsPrimitive.ResponsiveContainer
+            initialDimension={initialDimension}
+          >
+            {children}
+          </RechartsPrimitive.ResponsiveContainer>
+        ) : (
+          <div
+            style={{
+              width: initialDimension.width,
+              height: initialDimension.height,
+            }}
+          >
+            {children}
+          </div>
+        )}
       </div>
     </ChartContext.Provider>
   )

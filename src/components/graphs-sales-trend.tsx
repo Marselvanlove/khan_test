@@ -128,7 +128,7 @@ function useCompactChart() {
 }
 
 function buildMobileChartWidth(points: GraphsTrendPoint[]) {
-  return Math.max(points.length * 96, 1100);
+  return Math.max(points.length * 120, 1320);
 }
 
 export function GraphsSalesTrend({
@@ -287,17 +287,28 @@ export function GraphsSalesTrend({
                   ? {
                       WebkitOverflowScrolling: "touch",
                       touchAction: "pan-x",
+                      overscrollBehaviorX: "contain",
                     }
                   : undefined
               }
             >
               <div
-                className="pr-4 sm:pr-0"
+                className="pr-6 sm:pr-0"
                 style={isCompactChart ? { minWidth: `${mobileChartMinWidth}px` } : undefined}
               >
-                <ChartContainer config={chartConfig} className="min-h-[320px] w-full sm:min-h-[420px]">
+                <ChartContainer
+                  config={chartConfig}
+                  className="min-h-[320px] w-full sm:min-h-[420px]"
+                  responsive={!isCompactChart}
+                  initialDimension={{
+                    width: isCompactChart ? mobileChartMinWidth : 320,
+                    height: isCompactChart ? 320 : 200,
+                  }}
+                >
                   <ComposedChart
                     data={chartData}
+                    width={isCompactChart ? mobileChartMinWidth : undefined}
+                    height={isCompactChart ? 320 : undefined}
                     margin={{
                       top: isCompactChart ? 12 : 20,
                       right: isCompactChart ? 8 : 18,
