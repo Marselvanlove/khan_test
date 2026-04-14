@@ -294,26 +294,26 @@ export function GraphsSalesTrend({
             >
               <div
                 className="pr-6 sm:pr-0"
-                style={isCompactChart ? { minWidth: `${mobileChartMinWidth}px` } : undefined}
+                style={isCompactChart ? { width: `${mobileChartMinWidth}px` } : undefined}
               >
                 <ChartContainer
                   config={chartConfig}
-                  className="min-h-[320px] w-full sm:min-h-[420px]"
+                  className="h-[248px] min-h-[248px] w-full aspect-auto sm:min-h-[420px] sm:aspect-video sm:h-auto"
                   responsive={!isCompactChart}
                   initialDimension={{
                     width: isCompactChart ? mobileChartMinWidth : 320,
-                    height: isCompactChart ? 320 : 200,
+                    height: isCompactChart ? 248 : 200,
                   }}
                 >
                   <ComposedChart
                     data={chartData}
                     width={isCompactChart ? mobileChartMinWidth : undefined}
-                    height={isCompactChart ? 320 : undefined}
+                    height={isCompactChart ? 248 : undefined}
                     margin={{
-                      top: isCompactChart ? 12 : 20,
+                      top: isCompactChart ? 8 : 20,
                       right: isCompactChart ? 8 : 18,
                       left: isCompactChart ? 0 : 10,
-                      bottom: 8,
+                      bottom: isCompactChart ? 0 : 8,
                     }}
                     onClick={
                       isCompactChart
