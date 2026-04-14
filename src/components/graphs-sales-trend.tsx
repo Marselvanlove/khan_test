@@ -64,14 +64,18 @@ function compactKzt(value: number) {
   return String(value);
 }
 
-function buildRevenueTicks(points: GraphsTrendPoint[], highValueThreshold: number) {
+function buildRevenueTicks(
+  points: GraphsTrendPoint[],
+  highValueThreshold: number,
+  compact: boolean,
+) {
+  const floor = compact ? Math.max(highValueThreshold * 2, 150_000) : 500_000;
   const maxRevenue = Math.max(
-    500_000,
-    highValueThreshold * 2,
+    floor,
     ...points.map((point) => point.revenue),
     1,
   );
-  const step = maxRevenue <= 100_000 ? 25_000 : maxRevenue <= 200_000 ? 50_000 : 100_000;
+  const step = maxRevenue <= 150_000 ? 25_000 : maxRevenue <= 300_000 ? 50_000 : 100_000;
   const maxTick = Math.ceil(maxRevenue / step) * step;
   const ticks: number[] = [];
 
@@ -103,6 +107,26 @@ function getActivePointFromChartState(chartState: unknown): TrendChartPoint | nu
   return activePayload?.[0]?.payload ?? null;
 }
 
+function useCompactChart() {
+  const [compact, setCompact] = useState(false);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(max-width: 767px)");
+    const updateCompact = () => {
+      setCompact(mediaQuery.matches);
+    };
+
+    updateCompact();
+    mediaQuery.addEventListener("change", updateCompact);
+
+    return () => {
+      mediaQuery.removeEventListener("change", updateCompact);
+    };
+  }, []);
+
+  return compact;
+}
+
 export function GraphsSalesTrend({
   points,
   orders,
@@ -112,6 +136,7 @@ export function GraphsSalesTrend({
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const detailsRef = useRef<HTMLDivElement | null>(null);
   const shouldScrollRef = useRef(false);
+  const isCompactChart = useCompactChart();
 
   const ordersByDate = useMemo(() => {
     const grouped = new Map<string, OperationalOrderRow[]>();
@@ -142,9 +167,13 @@ export function GraphsSalesTrend({
     () => chartData.filter((point) => point.high_value_orders > 0),
     [chartData],
   );
+  const mobileChartMinWidth = useMemo(
+    () => Math.max(chartData.length * 56, 680),
+    [chartData.length],
+  );
   const { maxTick, ticks } = useMemo(
-    () => buildRevenueTicks(points, highValueThreshold),
-    [points, highValueThreshold],
+    () => buildRevenueTicks(points, highValueThreshold, isCompactChart),
+    [points, highValueThreshold, isCompactChart],
   );
   const selectedPoint = useMemo(
     () => chartData.find((point) => point.date === selectedDate) ?? null,
@@ -241,129 +270,161 @@ export function GraphsSalesTrend({
             </div>
           ) : null}
 
-          <ChartContainer config={chartConfig} className="min-h-[420px] w-full">
-            <ComposedChart
-              data={chartData}
-              margin={{ top: 20, right: 18, left: 10, bottom: 8 }}
-              onClick={(chartState) => {
-                const point = getActivePointFromChartState(chartState);
-
-                if (point) {
-                  handleSelectDate(point.date);
-                }
-              }}
-            >
-              <CartesianGrid vertical={false} strokeDasharray="4 4" />
-              <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={10} />
-              <YAxis
-                yAxisId="revenue"
-                tickLine={false}
-                axisLine={false}
-                tickMargin={12}
-                tickFormatter={compactKzt}
-                ticks={ticks}
-                domain={[0, maxTick]}
-              />
-              <YAxis
-                yAxisId="orders"
-                orientation="right"
-                tickLine={false}
-                axisLine={false}
-                tickMargin={12}
-                allowDecimals={false}
-              />
-
-              <ReferenceLine
-                yAxisId="revenue"
-                y={highValueThreshold}
-                stroke="rgba(98, 115, 182, 0.55)"
-                strokeDasharray="6 6"
-                ifOverflow="extendDomain"
-                label={{
-                  value: `${Math.round(highValueThreshold / 1000)}k ориентир`,
-                  position: "insideTopLeft",
-                  fill: "#6273b6",
-                  fontSize: 12,
-                }}
-              />
-
-              {selectedPoint ? (
-                <ReferenceLine
-                  x={selectedPoint.label}
-                  stroke="rgba(31, 41, 51, 0.18)"
-                  strokeDasharray="4 4"
-                />
-              ) : null}
-
-              <ChartTooltip
-                cursor={{ fill: "rgba(31, 41, 51, 0.05)" }}
-                content={({ active, payload }) => {
-                  if (!active || !payload?.length) {
-                    return null;
-                  }
-
-                  const point = payload[0]?.payload as GraphsTrendPoint | undefined;
-
-                  if (!point) {
-                    return null;
-                  }
-
-                  return (
-                    <div className="grid gap-2 rounded-lg border border-border/50 bg-background px-3 py-2 text-xs shadow-xl">
-                      <div className="font-medium text-foreground">{formatOrderDate(point.date)}</div>
-                      <div className="grid gap-1 text-muted-foreground">
-                        <div className="flex items-center justify-between gap-4">
-                          <span>Выручка</span>
-                          <span className="font-medium text-foreground">
-                            {formatCurrencyKzt(point.revenue)}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between gap-4">
-                          <span>Заказов</span>
-                          <span className="font-medium text-foreground">{point.orders_count}</span>
-                        </div>
-                        <div className="flex items-center justify-between gap-4">
-                          <span>Крупных заказов</span>
-                          <span className="font-medium text-foreground">
-                            {point.high_value_orders}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                }}
-              />
-
-              <Bar yAxisId="revenue" dataKey="revenue" radius={[12, 12, 0, 0]} barSize={18}>
-                {chartData.map((point) => {
-                  return (
-                    <Cell
-                      key={point.date}
-                      fill={getRevenueBarFill(point, selectedDate)}
-                      style={{ cursor: "pointer" }}
-                      onClick={() => handleSelectDate(point.date)}
-                    />
-                  );
-                })}
-              </Bar>
-
-              <Bar
-                yAxisId="orders"
-                dataKey="orders_count"
-                radius={[12, 12, 0, 0]}
-                barSize={18}
+          <div className="space-y-2">
+            {isCompactChart ? (
+              <p className="text-xs text-muted-foreground">
+                На телефоне график можно листать вправо, чтобы увидеть весь период.
+              </p>
+            ) : null}
+            <div className="-mx-1 overflow-x-auto pb-2 touch-pan-x sm:mx-0 sm:overflow-visible">
+              <div
+                className="pr-3 sm:pr-0"
+                style={isCompactChart ? { minWidth: `${mobileChartMinWidth}px` } : undefined}
               >
-                {chartData.map((point) => (
-                  <Cell
-                    key={`${point.date}-orders`}
-                    fill={getOrdersBarFill(point, selectedDate)}
-                    style={{ cursor: "pointer" }}
-                    onClick={() => handleSelectDate(point.date)}
-                  />
-                ))}
-              </Bar>
-            </ComposedChart>
-          </ChartContainer>
+                <ChartContainer config={chartConfig} className="min-h-[320px] w-full sm:min-h-[420px]">
+                  <ComposedChart
+                    data={chartData}
+                    margin={{
+                      top: isCompactChart ? 12 : 20,
+                      right: isCompactChart ? 8 : 18,
+                      left: isCompactChart ? 0 : 10,
+                      bottom: 8,
+                    }}
+                    onClick={(chartState) => {
+                      const point = getActivePointFromChartState(chartState);
+
+                      if (point) {
+                        handleSelectDate(point.date);
+                      }
+                    }}
+                  >
+                    <CartesianGrid vertical={false} strokeDasharray="4 4" />
+                    <XAxis
+                      dataKey="label"
+                      tickLine={false}
+                      axisLine={false}
+                      tickMargin={isCompactChart ? 8 : 10}
+                      tick={{ fontSize: isCompactChart ? 11 : 12 }}
+                    />
+                    <YAxis
+                      yAxisId="revenue"
+                      tickLine={false}
+                      axisLine={false}
+                      tickMargin={isCompactChart ? 8 : 12}
+                      tickFormatter={compactKzt}
+                      tick={{ fontSize: isCompactChart ? 11 : 12 }}
+                      ticks={ticks}
+                      domain={[0, maxTick]}
+                    />
+                    <YAxis
+                      yAxisId="orders"
+                      orientation="right"
+                      tickLine={false}
+                      axisLine={false}
+                      tickMargin={isCompactChart ? 8 : 12}
+                      tick={{ fontSize: isCompactChart ? 11 : 12 }}
+                      allowDecimals={false}
+                    />
+
+                    <ReferenceLine
+                      yAxisId="revenue"
+                      y={highValueThreshold}
+                      stroke="rgba(98, 115, 182, 0.55)"
+                      strokeDasharray="6 6"
+                      ifOverflow="extendDomain"
+                      label={{
+                        value: `${Math.round(highValueThreshold / 1000)}k ориентир`,
+                        position: "insideTopLeft",
+                        fill: "#6273b6",
+                        fontSize: isCompactChart ? 10 : 12,
+                      }}
+                    />
+
+                    {selectedPoint ? (
+                      <ReferenceLine
+                        x={selectedPoint.label}
+                        stroke="rgba(31, 41, 51, 0.18)"
+                        strokeDasharray="4 4"
+                      />
+                    ) : null}
+
+                    <ChartTooltip
+                      cursor={{ fill: "rgba(31, 41, 51, 0.05)" }}
+                      content={({ active, payload }) => {
+                        if (!active || !payload?.length) {
+                          return null;
+                        }
+
+                        const point = payload[0]?.payload as GraphsTrendPoint | undefined;
+
+                        if (!point) {
+                          return null;
+                        }
+
+                        return (
+                          <div className="grid gap-2 rounded-lg border border-border/50 bg-background px-3 py-2 text-xs shadow-xl">
+                            <div className="font-medium text-foreground">{formatOrderDate(point.date)}</div>
+                            <div className="grid gap-1 text-muted-foreground">
+                              <div className="flex items-center justify-between gap-4">
+                                <span>Выручка</span>
+                                <span className="font-medium text-foreground">
+                                  {formatCurrencyKzt(point.revenue)}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between gap-4">
+                                <span>Заказов</span>
+                                <span className="font-medium text-foreground">{point.orders_count}</span>
+                              </div>
+                              <div className="flex items-center justify-between gap-4">
+                                <span>Крупных заказов</span>
+                                <span className="font-medium text-foreground">
+                                  {point.high_value_orders}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }}
+                    />
+
+                    <Bar
+                      yAxisId="revenue"
+                      dataKey="revenue"
+                      radius={[12, 12, 0, 0]}
+                      barSize={isCompactChart ? 14 : 18}
+                    >
+                      {chartData.map((point) => {
+                        return (
+                          <Cell
+                            key={point.date}
+                            fill={getRevenueBarFill(point, selectedDate)}
+                            style={{ cursor: "pointer" }}
+                            onClick={() => handleSelectDate(point.date)}
+                          />
+                        );
+                      })}
+                    </Bar>
+
+                    <Bar
+                      yAxisId="orders"
+                      dataKey="orders_count"
+                      radius={[12, 12, 0, 0]}
+                      barSize={isCompactChart ? 14 : 18}
+                    >
+                      {chartData.map((point) => (
+                        <Cell
+                          key={`${point.date}-orders`}
+                          fill={getOrdersBarFill(point, selectedDate)}
+                          style={{ cursor: "pointer" }}
+                          onClick={() => handleSelectDate(point.date)}
+                        />
+                      ))}
+                    </Bar>
+                  </ComposedChart>
+                </ChartContainer>
+              </div>
+            </div>
+          </div>
         </CardContent>
       </Card>
 
