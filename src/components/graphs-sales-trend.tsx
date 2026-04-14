@@ -6,7 +6,6 @@ import {
   CartesianGrid,
   Cell,
   ComposedChart,
-  Line,
   ReferenceLine,
   XAxis,
   YAxis,
@@ -37,9 +36,21 @@ const chartConfig = {
   },
   orders_count: {
     label: "Заказы",
-    color: "#24303d",
+    color: "#4f8f84",
   },
 } satisfies ChartConfig;
+
+function getRevenueBarFill(point: TrendChartPoint, selectedDate: string | null) {
+  if (selectedDate === point.date) {
+    return "#24303d";
+  }
+
+  return point.has_high_value ? "#7b8bd0" : "#a7b4df";
+}
+
+function getOrdersBarFill(point: TrendChartPoint, selectedDate: string | null) {
+  return selectedDate === point.date ? "#2f5f58" : "#7db2a8";
+}
 
 function compactKzt(value: number) {
   if (value >= 1_000_000) {
@@ -190,8 +201,9 @@ export function GraphsSalesTrend({
         <CardHeader className="border-b border-border/70">
           <CardTitle>Продажи по дням</CardTitle>
           <CardDescription>
-            Столбцы показывают дневную выручку, линия показывает количество заказов. Нажмите на
-            столбец, точку или день на графике, чтобы открыть конкретные заказы ниже.
+            Светлые столбцы показывают дневную выручку, зелёные столбцы показывают количество
+            заказов по правой шкале. Нажмите на день в графике, чтобы открыть конкретные заказы
+            ниже.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4">
@@ -321,19 +333,12 @@ export function GraphsSalesTrend({
                 }}
               />
 
-              <Bar yAxisId="revenue" dataKey="revenue" radius={[12, 12, 0, 0]} barSize={26}>
+              <Bar yAxisId="revenue" dataKey="revenue" radius={[12, 12, 0, 0]} barSize={18}>
                 {chartData.map((point) => {
-                  const fill =
-                    selectedDate === point.date
-                      ? "#24303d"
-                      : point.has_high_value
-                        ? "#7b8bd0"
-                        : "#a7b4df";
-
                   return (
                     <Cell
                       key={point.date}
-                      fill={fill}
+                      fill={getRevenueBarFill(point, selectedDate)}
                       style={{ cursor: "pointer" }}
                       onClick={() => handleSelectDate(point.date)}
                     />
@@ -341,17 +346,21 @@ export function GraphsSalesTrend({
                 })}
               </Bar>
 
-              <Line
+              <Bar
                 yAxisId="orders"
-                type="monotone"
                 dataKey="orders_count"
-                stroke="var(--color-orders_count)"
-                strokeWidth={3}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                dot={{ r: 4, fill: "#ffffff", stroke: "var(--color-orders_count)", strokeWidth: 2 }}
-                activeDot={{ r: 6, fill: "#ffffff", stroke: "var(--color-orders_count)", strokeWidth: 2.5 }}
-              />
+                radius={[12, 12, 0, 0]}
+                barSize={18}
+              >
+                {chartData.map((point) => (
+                  <Cell
+                    key={`${point.date}-orders`}
+                    fill={getOrdersBarFill(point, selectedDate)}
+                    style={{ cursor: "pointer" }}
+                    onClick={() => handleSelectDate(point.date)}
+                  />
+                ))}
+              </Bar>
             </ComposedChart>
           </ChartContainer>
         </CardContent>
