@@ -19,6 +19,7 @@ import { buildSignedManagerLink } from "../../../src/shared/order-links.ts";
 import { normalizeRetailCrmOrder, getStatusMeta } from "../../../src/shared/orders.ts";
 import { createRetailCrmClient } from "../../../src/shared/retailcrm.ts";
 import { createSyncRun, finishSyncRun } from "../../../src/shared/sync-runs.ts";
+import { isMissingSupabaseColumnError } from "../../../src/shared/supabase-compat.ts";
 import {
   attachTelegramMessageId,
   createTelegramMessageState,
@@ -340,9 +341,17 @@ async function sendTelegramMessageWithRetry(
 async function loadExistingOrderSnapshots(
   supabase: ReturnType<typeof createSupabaseAdmin>,
 ) {
-  const { data, error } = await supabase
+  let result = await supabase
     .from("orders")
     .select("retailcrm_id, external_id, status, total_amount, utm_source, updated_at, sync_state");
+
+  if (result.error && isMissingSupabaseColumnError(result.error, "sync_state")) {
+    result = await supabase
+      .from("orders")
+      .select("retailcrm_id, external_id, status, total_amount, utm_source, updated_at");
+  }
+
+  const { data, error } = result;
 
   if (error) {
     throw error;
@@ -394,9 +403,28 @@ async function upsertOrders(params: {
   }).length;
 
   for (const group of chunk(nextRows, 200)) {
-    const { error } = await supabase.from("orders").upsert(group, {
+    let result = await supabase.from("orders").upsert(group, {
       onConflict: "retailcrm_id",
     });
+
+    if (
+      result.error &&
+      (isMissingSupabaseColumnError(result.error, "synced_at") ||
+        isMissingSupabaseColumnError(result.error, "last_seen_in_retailcrm_at") ||
+        isMissingSupabaseColumnError(result.error, "sync_state"))
+    ) {
+      result = await supabase.from("orders").upsert(
+        group.map(
+          ({ synced_at: _syncedAt, last_seen_in_retailcrm_at: _lastSeen, sync_state: _syncState, ...legacyRow }) =>
+            legacyRow,
+        ),
+        {
+          onConflict: "retailcrm_id",
+        },
+      );
+    }
+
+    const { error } = result;
 
     if (error) {
       throw error;
@@ -407,7 +435,7 @@ async function upsertOrders(params: {
   const newlyMissingRows = missingRows.filter((row) => row.sync_state !== "missing_in_retailcrm");
 
   if (newlyMissingRows.length) {
-    const { error } = await supabase
+    let result = await supabase
       .from("orders")
       .update({
         sync_state: "missing_in_retailcrm",
@@ -416,6 +444,11 @@ async function upsertOrders(params: {
         "retailcrm_id",
         newlyMissingRows.map((row) => row.retailcrm_id),
       );
+
+    const error =
+      result.error && isMissingSupabaseColumnError(result.error, "sync_state")
+        ? null
+        : result.error;
 
     if (error) {
       throw error;

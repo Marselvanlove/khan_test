@@ -3,6 +3,7 @@ import { DEFAULT_ADMIN_SETTINGS, isMissingSupabaseTableError, normalizeAdminSett
 import { buildOperationalTouchIndex } from "@/shared/order-events";
 import { loadOrderEvents } from "@/shared/order-event-store";
 import { buildSignedManagerLink } from "@/shared/order-links";
+import { isMissingSupabaseColumnError } from "@/shared/supabase-compat";
 import {
   buildOperationalOrderRowFromRecord,
   normalizeRetailCrmOrder,
@@ -89,11 +90,26 @@ export async function loadOrderSnapshotByRetailCrmId(retailcrmId: number) {
     throw new Error("SUPABASE_URL и SUPABASE_SECRET_KEY нужны для чтения заказа.");
   }
 
-  const { data, error } = await supabase
+  let result = await supabase
     .from("orders")
     .select("retailcrm_id, external_id, customer_name, phone, email, city, total_amount, created_at, updated_at, synced_at, last_seen_in_retailcrm_at, sync_state, status, utm_source, telegram_notified_at, raw_payload")
     .eq("retailcrm_id", retailcrmId)
     .maybeSingle();
+
+  if (
+    result.error &&
+    (isMissingSupabaseColumnError(result.error, "synced_at") ||
+      isMissingSupabaseColumnError(result.error, "last_seen_in_retailcrm_at") ||
+      isMissingSupabaseColumnError(result.error, "sync_state"))
+  ) {
+    result = await supabase
+      .from("orders")
+      .select("retailcrm_id, external_id, customer_name, phone, email, city, total_amount, created_at, updated_at, status, utm_source, telegram_notified_at, raw_payload")
+      .eq("retailcrm_id", retailcrmId)
+      .maybeSingle();
+  }
+
+  const { data, error } = result;
 
   if (error) {
     throw error;
@@ -232,7 +248,7 @@ export async function updateOrderSnapshotAfterCompletion(params: {
     utmFieldCode: process.env.RETAILCRM_UTM_FIELD_CODE?.trim(),
     syncedAt: new Date().toISOString(),
   });
-  const { error } = await supabase
+  let result = await supabase
     .from("orders")
     .update({
       customer_name: normalized.customer_name,
@@ -251,6 +267,32 @@ export async function updateOrderSnapshotAfterCompletion(params: {
       raw_payload: params.rawOrder,
     })
     .eq("retailcrm_id", params.retailcrmId);
+
+  if (
+    result.error &&
+    (isMissingSupabaseColumnError(result.error, "synced_at") ||
+      isMissingSupabaseColumnError(result.error, "last_seen_in_retailcrm_at") ||
+      isMissingSupabaseColumnError(result.error, "sync_state"))
+  ) {
+    result = await supabase
+      .from("orders")
+      .update({
+        customer_name: normalized.customer_name,
+        phone: normalized.phone,
+        email: normalized.email,
+        city: normalized.city,
+        utm_source: normalized.utm_source,
+        status: normalized.status,
+        item_count: normalized.item_count,
+        total_amount: normalized.total_amount,
+        created_at: normalized.created_at,
+        updated_at: normalized.updated_at,
+        raw_payload: params.rawOrder,
+      })
+      .eq("retailcrm_id", params.retailcrmId);
+  }
+
+  const { error } = result;
 
   if (error) {
     throw error;

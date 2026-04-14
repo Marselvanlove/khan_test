@@ -50,6 +50,7 @@ import { buildKanbanStatusLabelMap } from "@/shared/kanban";
 import { buildNotificationLogFeed } from "@/shared/notification-logs";
 import { buildSignedLogisticsLink, buildSignedManagerLink } from "@/shared/order-links";
 import { loadLatestSyncRun } from "@/shared/sync-runs";
+import { isMissingSupabaseColumnError } from "@/shared/supabase-compat";
 import {
   buildNotificationEventKey,
   DEFAULT_ADMIN_SETTINGS,
@@ -895,18 +896,18 @@ export async function getDashboardData(): Promise<DashboardData> {
   const linkSigningSecret = process.env.LINK_SIGNING_SECRET?.trim() ?? null;
   const appBaseUrl = process.env.APP_BASE_URL?.trim() ?? null;
 
-  const [metricsResult, allOrdersResult, notificationLogsResult, adminSettingsResult, kanbanStatuses, latestSyncRunResult] =
+  const [metricsResult, initialOrdersResult, notificationLogsResult, adminSettingsResult, kanbanStatuses, latestSyncRunResult] =
     await Promise.all([
       supabase.from("daily_order_metrics").select("*").order("order_date", { ascending: true }),
       supabase
         .from("orders")
         .select("retailcrm_id, external_id, customer_name, phone, email, city, total_amount, created_at, updated_at, synced_at, last_seen_in_retailcrm_at, sync_state, status, utm_source, telegram_notified_at, raw_payload")
         .order("created_at", { ascending: false }),
-    supabase
-      .from("notification_logs")
-      .select("order_retailcrm_id, order_number, event_type, channel, recipient, status, attempt, rate_limited, error_message, created_at, delivered_at")
-      .order("created_at", { ascending: false })
-      .limit(500),
+      supabase
+        .from("notification_logs")
+        .select("order_retailcrm_id, order_number, event_type, channel, recipient, status, attempt, rate_limited, error_message, created_at, delivered_at")
+        .order("created_at", { ascending: false })
+        .limit(500),
       supabase
         .from("admin_settings")
         .select(
@@ -920,6 +921,20 @@ export async function getDashboardData(): Promise<DashboardData> {
         run: null,
       })),
     ]);
+
+  let allOrdersResult: typeof initialOrdersResult | any = initialOrdersResult;
+
+  if (
+    initialOrdersResult.error &&
+    (isMissingSupabaseColumnError(initialOrdersResult.error, "synced_at") ||
+      isMissingSupabaseColumnError(initialOrdersResult.error, "last_seen_in_retailcrm_at") ||
+      isMissingSupabaseColumnError(initialOrdersResult.error, "sync_state"))
+  ) {
+    allOrdersResult = await supabase
+      .from("orders")
+      .select("retailcrm_id, external_id, customer_name, phone, email, city, total_amount, created_at, updated_at, status, utm_source, telegram_notified_at, raw_payload")
+      .order("created_at", { ascending: false });
+  }
 
   const logsMissingTable = isMissingSupabaseTableError(notificationLogsResult.error);
   const settingsMissingTable = isMissingSupabaseTableError(adminSettingsResult.error);
