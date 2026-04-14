@@ -1,8 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { XIcon } from "lucide-react";
 import { OperationsKanban } from "@/components/operations-kanban";
+import { OpsOrderCard } from "@/components/ops-order-card";
 import { OrderQueue } from "@/components/order-queue";
 import { StatusBreakdown } from "@/components/status-breakdown";
 import { Button } from "@/components/ui/button";
@@ -17,7 +19,9 @@ import { cn } from "@/lib/utils";
 
 interface OperationsTabProps {
   data: OperationsTabData;
+  allOrders?: OperationalOrderRow[];
   manageAccess?: OrderWriteAccessPayload | null;
+  initialSelectedOrderId?: number | null;
 }
 
 type OperationsFilter =
@@ -96,10 +100,23 @@ function matchesFilter(
   return matchesMetric(order, filter.key, highValueThreshold);
 }
 
-export function OperationsTab({ data, manageAccess = null }: OperationsTabProps) {
+export function OperationsTab({
+  data,
+  allOrders = [],
+  manageAccess = null,
+  initialSelectedOrderId = null,
+}: OperationsTabProps) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [activeFilter, setActiveFilter] = useState<OperationsFilter>({ type: "all" });
   const [viewMode, setViewMode] = useState<"list" | "kanban">("list");
+  const [selectedOrderId, setSelectedOrderId] = useState<number | null>(initialSelectedOrderId);
   const canManage = Boolean(manageAccess);
+
+  useEffect(() => {
+    setSelectedOrderId(initialSelectedOrderId);
+  }, [initialSelectedOrderId]);
 
   const filteredQueues = useMemo(
     () => ({
@@ -122,9 +139,46 @@ export function OperationsTab({ data, manageAccess = null }: OperationsTabProps)
       ),
     [activeFilter, data.high_value_threshold, data.kanbanOrders],
   );
+  const selectedOrder = useMemo(() => {
+    if (selectedOrderId == null) {
+      return null;
+    }
+
+    const allKnownOrders = [
+      ...allOrders,
+      ...data.actionQueue,
+      ...data.priorityQueue,
+      ...data.problemQueue,
+      ...data.kanbanOrders,
+    ];
+
+    return allKnownOrders.find((order) => order.retailcrm_id === selectedOrderId) ?? null;
+  }, [
+    allOrders,
+    data.actionQueue,
+    data.priorityQueue,
+    data.problemQueue,
+    data.kanbanOrders,
+    selectedOrderId,
+  ]);
+
+  function clearSelectedOrderFromUrl() {
+    const nextParams = new URLSearchParams(searchParams.toString());
+
+    nextParams.delete("order");
+    nextParams.delete("sig");
+    nextParams.delete("exp");
+
+    const nextQuery = nextParams.toString();
+
+    router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, {
+      scroll: false,
+    });
+  }
 
   return (
-    <div className="grid gap-6">
+    <>
+      <div className="grid gap-6">
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {data.kpis.map((item) => {
           const isActive = activeFilter.type === "metric" && activeFilter.key === item.key;
@@ -251,6 +305,24 @@ export function OperationsTab({ data, manageAccess = null }: OperationsTabProps)
           />
         </>
       )}
-    </div>
+      </div>
+
+      {selectedOrder ? (
+        <OpsOrderCard
+          order={selectedOrder}
+          manageAccess={manageAccess}
+          open
+          showCard={false}
+          onOpenChange={(nextOpen) => {
+            if (nextOpen) {
+              return;
+            }
+
+            setSelectedOrderId(null);
+            clearSelectedOrderFromUrl();
+          }}
+        />
+      ) : null}
+    </>
   );
 }

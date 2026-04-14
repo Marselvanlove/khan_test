@@ -51,6 +51,9 @@ interface OpsOrderCardProps {
   onOrderUpdated?: (order: OperationalOrderRow) => void;
   onRequestStatusChange?: () => void;
   manageAccess?: OrderWriteAccessPayload | null;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  showCard?: boolean;
 }
 
 interface EditableOrderState {
@@ -118,20 +121,31 @@ export function OpsOrderCard({
   onOrderUpdated,
   onRequestStatusChange,
   manageAccess = null,
+  open: controlledOpen,
+  onOpenChange,
+  showCard = true,
 }: OpsOrderCardProps) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [order, setOrder] = useState(initialOrder);
   const [draft, setDraft] = useState<EditableOrderState>(() => toEditableState(initialOrder));
   const [isPending, startUiTransition] = useTransition();
   const isKanban = variant === "kanban";
   const canManage = Boolean(manageAccess);
+  const isOpen = controlledOpen ?? internalOpen;
 
   useEffect(() => {
     setOrder(initialOrder);
     setDraft(toEditableState(initialOrder));
   }, [initialOrder]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setIsEditing(false);
+      setDraft(toEditableState(order));
+    }
+  }, [isOpen, order]);
 
   function applyOrderUpdate(nextOrder: OperationalOrderRow) {
     syncOrderState(nextOrder, setOrder, setDraft);
@@ -140,17 +154,17 @@ export function OpsOrderCard({
 
   return (
     <Sheet
-      open={open}
+      open={isOpen}
       onOpenChange={(nextOpen) => {
-        setOpen(nextOpen);
-
-        if (!nextOpen) {
-          setIsEditing(false);
-          setDraft(toEditableState(order));
+        if (controlledOpen == null) {
+          setInternalOpen(nextOpen);
         }
+
+        onOpenChange?.(nextOpen);
       }}
     >
-      <Card className={cn("border-border/70 bg-card/90 shadow-sm", isKanban && "w-full overflow-hidden")}>
+      {showCard ? (
+        <Card className={cn("border-border/70 bg-card/90 shadow-sm", isKanban && "w-full overflow-hidden")}>
         {isKanban ? (
           <>
             <CardContent className="grid gap-3 p-4">
@@ -307,7 +321,8 @@ export function OpsOrderCard({
             </CardFooter>
           </>
         )}
-      </Card>
+        </Card>
+      ) : null}
 
       <SheetContent className="w-full sm:max-w-2xl">
         <SheetHeader>

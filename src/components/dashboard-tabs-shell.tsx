@@ -39,11 +39,12 @@ import type {
   OrderEventItem,
   OperationsTabData,
   OperationalOrderRow,
+  OrderWriteAccessPayload,
   OwnerMetrics,
   SyncHealthOverview,
 } from "@/shared/types";
 
-type DashboardTabValue = "graphs" | "operations" | "marketing" | "finance" | "system";
+export type DashboardTabValue = "graphs" | "operations" | "marketing" | "finance" | "system";
 const DASHBOARD_AUTO_REFRESH_MS = 45_000;
 
 const TAB_ITEMS = [
@@ -72,6 +73,9 @@ interface DashboardTabsShellProps {
   notificationLogs: NotificationLogItem[];
   orderEvents: OrderEventItem[];
   syncHealth: SyncHealthOverview;
+  initialTab?: DashboardTabValue;
+  selectedOrderId?: number | null;
+  manageAccess?: OrderWriteAccessPayload | null;
 }
 
 export function DashboardTabsShell({
@@ -88,9 +92,12 @@ export function DashboardTabsShell({
   notificationLogs,
   orderEvents,
   syncHealth,
+  initialTab = "graphs",
+  selectedOrderId = null,
+  manageAccess = null,
 }: DashboardTabsShellProps) {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<DashboardTabValue>("graphs");
+  const [activeTab, setActiveTab] = useState<DashboardTabValue>(initialTab);
   const [menuOpen, setMenuOpen] = useState(false);
   const [, startRefreshTransition] = useTransition();
 
@@ -100,14 +107,14 @@ export function DashboardTabsShell({
   );
 
   const refreshDashboard = useEffectEvent(() => {
-    if (document.visibilityState !== "visible") {
-      return;
-    }
-
     startRefreshTransition(() => {
       router.refresh();
     });
   });
+
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -198,7 +205,12 @@ export function DashboardTabsShell({
         </TabsContent>
 
         <TabsContent value="operations">
-          <OperationsTab data={operationsData} />
+          <OperationsTab
+            data={operationsData}
+            allOrders={allOrders}
+            manageAccess={manageAccess}
+            initialSelectedOrderId={selectedOrderId}
+          />
         </TabsContent>
 
         <TabsContent value="marketing">
